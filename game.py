@@ -53,9 +53,6 @@ class FourInASquareGame:
 
         board_3x3 = np.array(self.possible_sub_board_spots).reshape(3, 3)
 
-        # np.where returns a tuple of arrays: (rows, cols) where condition is True
-        # For a 2D array, pos[0] contains row indices, pos[1] contains column indices
-        # Example: if board_3x3[1][2] == 2, then pos = ([1], [2])
         positions = np.where(board_3x3 == 2)
         
         if len(positions[0]) > 0:
@@ -86,7 +83,7 @@ class FourInASquareGame:
 
     def play(self):
         player_turn = True
-        while self.empty_spots.__len__() > 0:
+        while any(spot != [] for spot in self.empty_spots):
 
             if player_turn:
                 if self.play_mode == "RANDOM":
@@ -99,6 +96,7 @@ class FourInASquareGame:
             self.game_boards[FourInASquareGame.board_to_string(self.board_state)] = 0
 
             result = self.check_win()
+
             if result != "Ongoing":
                 self.score_boards()
                 break
@@ -137,7 +135,7 @@ class FourInASquareGame:
                             if score > highest_score:
                                 highest_score = score
                                 best_move = (i, spot)
-                                best_sub_board_move = j
+                                best_sub_board_to_move = j
 
             if best_move is None and best_sub_board_to_move is None:
                 self.perform_random_agent_move()
@@ -147,6 +145,7 @@ class FourInASquareGame:
                 self.board_state[empty_sub_board_spot] = self.board_state[best_sub_board_to_move].copy()
                 self.board_state[best_sub_board_to_move] = []
                 self.empty_spots[i].remove(spot)
+                self.refresh_sub_board_spots(best_sub_board_to_move, empty_sub_board_spot)
 
 
 
@@ -159,40 +158,38 @@ class FourInASquareGame:
 
 
     def is_valid_move(self, row, col):
-        return (row, col) in self.empty_spots
+        
 
 
     def make_human_move(self, row, col):
-        if self.is_valid_move(row, col):
-            self.board_state[row][col] = 1
-            self.empty_spots.remove((row, col))
-            return True
-        else:
-            return False
+        
 
 
     def get_cell_state(self, row, col):
-        return self.board_state[row][col]
+        
 
+
+    def _make_random_move(self, player_value):
+        """Helper method to make a random move for any player."""
+        non_empty_indices = [i for i, sub_board in enumerate(self.empty_spots) if sub_board != []]
+        random_sub_board_idx = random.choice(non_empty_indices)
+        random_spot = random.choice(self.empty_spots[random_sub_board_idx])
+        available_sub_board_indices = [i for i, val in enumerate(self.possible_sub_board_spots) if val == 1]
+        random_sub_board_idx = random.choice(available_sub_board_indices)
+
+        self.board_state[random_sub_board_idx][random_spot] = player_value
+        self.empty_spots[random_sub_board_idx].remove(random_spot)
+
+        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+        self.board_state[empty_sub_board_spot] = self.board_state[random_sub_board_idx].copy()
+        self.board_state[random_sub_board_idx] = []
+        self.refresh_sub_board_spots(random_sub_board_idx, empty_sub_board_spot)
 
     def perform_random_rival_move(self):
-        pos = random.choice(self.empty_spots)
-        self.board_state[pos] = 1
-        self.empty_spots.remove(pos)
-
+        self._make_random_move(player_value=2)
 
     def perform_random_agent_move(self):
-        random_move = 
-
-
-
-    def get_winner(self):
-        if self.winner == -1:
-            return "X wins"
-        elif self.winner == 1:
-            return "O wins"
-        else:
-            return "Draw"
+        self._make_random_move(player_value=1)
 
 
     def check_win(self):
@@ -200,56 +197,49 @@ class FourInASquareGame:
 
         # Convert board value to text
         def player_to_text(val):
-            return "X" if val == -1 else "O"
+            return "Red" if val == 1 else "White"
+        
+        # Helper function to get value at a position in the full 6x6 grid
+        def get_position(global_row, global_col):
+            # Each sub-board is 2x2, arranged in a 3x3 grid of sub-boards
+            sub_board_row = global_row // 2  # Which row of sub-boards (0, 1, or 2)
+            sub_board_col = global_col // 2  # Which column of sub-boards (0, 1, or 2)
+            sub_board_idx = sub_board_row * 3 + sub_board_col
+            
+            # Check if this sub-board is empty
+            if b[sub_board_idx] == []:
+                return 0  # Empty position
+            
+            # Position within the 2x2 sub-board
+            pos_row = global_row % 2
+            pos_col = global_col % 2
+            pos_idx = pos_row * 2 + pos_col
+            
+            return b[sub_board_idx][pos_idx]
+        
+        # Check all possible 2x2 squares in the 6x6 grid
+        # There are 5x5 = 25 possible 2x2 squares
+        for row in range(5):
+            for col in range(5):
+                # Get the 2x2 square starting at (row, col)
+                top_left = get_position(row, col)
+                top_right = get_position(row, col + 1)
+                bottom_left = get_position(row + 1, col)
+                bottom_right = get_position(row + 1, col + 1)
+                
+                # Check if all four positions have the same non-zero value
+                if (top_left == top_right == bottom_left == bottom_right != 0):
+                    return f"{player_to_text(top_left)} wins"
 
-        # Check rows
-        for i in range(3):
-            if b[i][0] == b[i][1] == b[i][2] != 0:
-                return f"{player_to_text(b[i][0])} wins"
-
-        # Check columns
-        for j in range(3):
-            if b[0][j] == b[1][j] == b[2][j] != 0:
-                return f"{player_to_text(b[0][j])} wins"
-
-        # Check diagonals
-        if b[0][0] == b[1][1] == b[2][2] != 0:
-            return f"{player_to_text(b[0][0])} wins"
-
-        if b[0][2] == b[1][1] == b[2][0] != 0:
-            return f"{player_to_text(b[0][2])} wins"
-
-        # Draw? (no empty spots)
-        if not any(0 in row for row in b):
+        # Draw? (no empty spots in any non-empty sub-board)
+        if not any(0 in sub_board for sub_board in b if sub_board != []):
             return "Draw"
 
         # Still playing
         return "Ongoing"
 
 
-    def print_game_result(self):
-        if self.winner == 1:
-            print("O wins")
-        elif self.winner == -1:
-            print("X wins")
-        else:
-            print("It's a draw")
-
-
     def print_board(self):
-        for i in range(3):
-            row = []
-            for j in range(3):
-                cell = (
-                    " X " if self.board_state[i][j] == -1
-                    else " O " if self.board_state[i][j] == 1
-                    else "   "
-                )
-                row.append(cell)
-            print("|".join(row))
-            if i < 2:
-                print("---+---+---")
-        print("\n")
 
 
 if __name__ == "__main__":

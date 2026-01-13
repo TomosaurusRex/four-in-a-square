@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import json
+import copy
 import os
 
 
@@ -114,15 +115,15 @@ class FourInASquareGame:
 
             for i in range(9):
                 for spot in self.empty_spots[i]:
-                    possible_move = self.board_state.copy()
+                    possible_move = copy.deepcopy(self.board_state)
                     possible_move[i][spot] = 1
 
                     for j in range(9):
                         if self.possible_sub_board_spots[j] == 1:
-                            possible_sub_board_move = possible_move.copy()
                             empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+                            possible_sub_board_move = copy.deepcopy(possible_move)
 
-                            possible_sub_board_move[empty_sub_board_spot] = self.possible_sub_board_move[j].copy()
+                            possible_sub_board_move[empty_sub_board_spot] = copy.deepcopy(possible_sub_board_move[j])
                             possible_sub_board_move[j] = []
 
                             possible_board_state_string = FourInASquareGame.board_to_string(possible_sub_board_move)
@@ -141,10 +142,11 @@ class FourInASquareGame:
                 self.perform_random_agent_move()
                 
             else:
-                self.board_state[best_move] = 1
-                self.board_state[empty_sub_board_spot] = self.board_state[best_sub_board_to_move].copy()
+                empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+                self.board_state[best_move[0]][best_move[1]] = 1
+                self.board_state[empty_sub_board_spot] = copy.deepcopy(self.board_state[best_sub_board_to_move])
                 self.board_state[best_sub_board_to_move] = []
-                self.empty_spots[i].remove(spot)
+                self.empty_spots[best_move[0]].remove(best_move[1])
                 self.refresh_sub_board_spots(best_sub_board_to_move, empty_sub_board_spot)
 
 
@@ -181,7 +183,7 @@ class FourInASquareGame:
         self.empty_spots[random_sub_board_idx].remove(random_spot)
 
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
-        self.board_state[empty_sub_board_spot] = self.board_state[random_sub_board_idx].copy()
+        self.board_state[empty_sub_board_spot] = copy.deepcopy(self.board_state[random_sub_board_idx])
         self.board_state[random_sub_board_idx] = []
         self.refresh_sub_board_spots(random_sub_board_idx, empty_sub_board_spot)
 
@@ -243,7 +245,7 @@ class FourInASquareGame:
 
 
 if __name__ == "__main__":
-    game = Game()
+    game = FourInASquareGame("RANDOM")
     game.play()
     game.print_board()
     game.print_game_result()

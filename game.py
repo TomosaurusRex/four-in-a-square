@@ -18,6 +18,7 @@ class FourInASquareGame:
         else:
             self.boards_and_scores = {}
 
+
     def score_boards(self):
         num_boards = len(self.game_boards)
         boards = list(self.game_boards.keys())
@@ -33,15 +34,55 @@ class FourInASquareGame:
             decay = 0.9 ** (num_boards - i - 1)
             self.game_boards[board] = outcome * decay
 
-    def board_to_string(self):
+
+    @staticmethod
+    def board_to_string(board_state):
         board_state_string = ""
-        for sub_board in self.board_state:
+        for sub_board in board_state:
             if sub_board == []:
                 board_state_string += "    "
             else:
                 for cell in sub_board:
                     board_state_string += "1" if cell == 1 else "2" if cell == 2 else "0"
         return board_state_string
+    
+
+    def refresh_sub_board_spots(self, source_idx=None, destination_idx=None):
+        self.possible_sub_board_spots = [0] * 9
+        self.possible_sub_board_spots[source_idx] = 2
+
+        board_3x3 = np.array(self.possible_sub_board_spots).reshape(3, 3)
+
+        # np.where returns a tuple of arrays: (rows, cols) where condition is True
+        # For a 2D array, pos[0] contains row indices, pos[1] contains column indices
+        # Example: if board_3x3[1][2] == 2, then pos = ([1], [2])
+        positions = np.where(board_3x3 == 2)
+        
+        if len(positions[0]) > 0:
+            # Extract the row and column of the tile with value 2
+            source_row = positions[0][0]
+            source_col = positions[1][0]
+            
+            # Set tiles above, below, left, and right to 1 (no diagonals)
+            # Check tile above
+            if source_row - 1 >= 0:
+                board_3x3[source_row - 1, source_col] = 1
+            
+            # Check tile below
+            if source_row + 1 < 3:
+                board_3x3[source_row + 1, source_col] = 1
+            
+            # Check tile to the left
+            if source_col - 1 >= 0:
+                board_3x3[source_row, source_col - 1] = 1
+            
+            # Check tile to the right
+            if source_col + 1 < 3:
+                board_3x3[source_row, source_col + 1] = 1
+
+        self.possible_sub_board_spots = board_3x3.flatten().tolist()
+        self.possible_sub_board_spots[destination_idx] = 0
+        
 
     def play(self):
         player_turn = True
@@ -55,7 +96,7 @@ class FourInASquareGame:
             else:
                 self.perform_random_rival_move()
 
-            self.game_boards[self.board_to_string()] = 0
+            self.game_boards[FourInASquareGame.board_to_string(self.board_state)] = 0
 
             result = self.check_win()
             if result != "Ongoing":
@@ -64,13 +105,14 @@ class FourInASquareGame:
 
             player_turn = not player_turn
 
+
     def perform_greedy_agent_move(self):
         if random.random() > 0.9:
             self.perform_random_agent_move()
         else:
             highest_score = -1
             best_move = None
-            best_place = None
+            best_sub_board_to_move = None
 
             for i in range(9):
                 for spot in self.empty_spots[i]:
@@ -85,7 +127,7 @@ class FourInASquareGame:
                             possible_sub_board_move[empty_sub_board_spot] = self.possible_sub_board_move[j].copy()
                             possible_sub_board_move[j] = []
 
-                            possible_board_state_string = self.board_to_string() #fix to work with string as input and not only self
+                            possible_board_state_string = FourInASquareGame.board_to_string(possible_sub_board_move)
 
                             if possible_board_state_string in self.boards_and_scores:
                                 score = self.boards_and_scores[possible_board_state_string][1]
@@ -95,26 +137,30 @@ class FourInASquareGame:
                             if score > highest_score:
                                 highest_score = score
                                 best_move = (i, spot)
+                                best_sub_board_move = j
 
-            if best_move is None:
-                best_move = (random.randint(0, 8), random.choice(self.empty_spots))
-
-            self.board_state[best_move] = 1
-            self.empty_spots[i].remove(spot)
-
-            
+            if best_move is None and best_sub_board_to_move is None:
+                self.perform_random_agent_move()
+                
+            else:
+                self.board_state[best_move] = 1
+                self.board_state[empty_sub_board_spot] = self.board_state[best_sub_board_to_move].copy()
+                self.board_state[best_sub_board_to_move] = []
+                self.empty_spots[i].remove(spot)
 
 
 
 
     def reset_game(self):
-        self.board_state = np.array([[0, 0, 0], [0, 0, 0], [0, 0, 0]])
-        self.empty_spots = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)]
-        self.winner = 0
+        self.board_state = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+        self.empty_spots = [[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]]
         self.game_boards = {}
+        self.possible_sub_board_spots = [0, 1, 0, 1, 2, 1, 0, 1, 0]
+
 
     def is_valid_move(self, row, col):
         return (row, col) in self.empty_spots
+
 
     def make_human_move(self, row, col):
         if self.is_valid_move(row, col):
@@ -124,18 +170,21 @@ class FourInASquareGame:
         else:
             return False
 
+
     def get_cell_state(self, row, col):
         return self.board_state[row][col]
+
 
     def perform_random_rival_move(self):
         pos = random.choice(self.empty_spots)
         self.board_state[pos] = 1
         self.empty_spots.remove(pos)
 
+
     def perform_random_agent_move(self):
-        pos = random.choice(self.empty_spots)
-        self.board_state[pos] = -1
-        self.empty_spots.remove(pos)
+        random_move = 
+
+
 
     def get_winner(self):
         if self.winner == -1:
@@ -144,6 +193,7 @@ class FourInASquareGame:
             return "O wins"
         else:
             return "Draw"
+
 
     def check_win(self):
         b = self.board_state
@@ -176,6 +226,7 @@ class FourInASquareGame:
         # Still playing
         return "Ongoing"
 
+
     def print_game_result(self):
         if self.winner == 1:
             print("O wins")
@@ -183,6 +234,7 @@ class FourInASquareGame:
             print("X wins")
         else:
             print("It's a draw")
+
 
     def print_board(self):
         for i in range(3):

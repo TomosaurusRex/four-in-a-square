@@ -18,7 +18,7 @@ class FourInASquareGame:
                 self.boards_and_scores = json.load(f)
         else:
             self.boards_and_scores = {}
-
+        
 
     def score_boards(self):
         num_boards = len(self.game_boards)
@@ -34,6 +34,25 @@ class FourInASquareGame:
         for i, board in enumerate(boards):
             decay = 0.9 ** (num_boards - i - 1)
             self.game_boards[board] = outcome * decay
+
+
+    def save_game_to_dict(self):
+        # First score the boards from this game
+        self.score_boards()
+        
+        # Then add them to the main dictionary with running averages
+        for key, value in self.game_boards.items():
+            if key in self.boards_and_scores:
+                num_of_appearances = self.boards_and_scores[key][0]
+                num_of_appearances += 1
+                avg_score = ((self.boards_and_scores[key][1] * (num_of_appearances - 1)) + value) / num_of_appearances
+                self.boards_and_scores[key] = (num_of_appearances, avg_score)
+            else:
+                self.boards_and_scores[key] = (1, value)
+        
+        # Save to JSON file
+        with open("boards_and_scores.json", "w") as f:
+            json.dump(self.boards_and_scores, f)
 
 
     @staticmethod
@@ -99,7 +118,7 @@ class FourInASquareGame:
             result = self.check_win()
 
             if result != "Ongoing":
-                self.score_boards()
+                self.save_game_to_dict()
                 break
 
             player_turn = not player_turn
@@ -148,8 +167,6 @@ class FourInASquareGame:
                 self.board_state[best_sub_board_to_move] = []
                 self.empty_spots[best_move[0]].remove(best_move[1])
                 self.refresh_sub_board_spots(best_sub_board_to_move, empty_sub_board_spot)
-
-
 
 
     def reset_game(self):
@@ -327,5 +344,5 @@ class FourInASquareGame:
 if __name__ == "__main__":
     game = FourInASquareGame("RANDOM")
     game.play()
-    game.print_board()
-    game.print_game_result()
+    #game.print_board()
+    #game.print_game_result()

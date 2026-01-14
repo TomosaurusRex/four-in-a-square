@@ -159,40 +159,54 @@ class FourInASquareGame:
         self.possible_sub_board_spots = [0, 1, 0, 1, 2, 1, 0, 1, 0]
 
 
-    def is_valid_move(self, row, col):
+    def is_valid_move(self, sub_board, spot):
+        if self.board_state[sub_board][spot] == 0:
+            return True
+        return False
+
+    
+    def is_valid_sub_board_move(self, source_idx, destination_idx):
+        if self.possible_sub_board_spots[destination_idx] == 2 and self.possible_sub_board_spots[source_idx] == 1:
+            return True
+        return False
         
 
+    def make_human_move(self, source_idx, destination_idx, sub_board, spot):
+        if self.is_valid_move(sub_board, spot) and self.is_valid_sub_board_move(source_idx, destination_idx):
+            self.board_state[sub_board][spot] = 1
+            self.empty_spots[sub_board].remove(spot)
 
-    def make_human_move(self, row, col):
-        
+            self.board_state[destination_idx] = copy.deepcopy(self.board_state[source_idx])
+            self.board_state[source_idx] = []
+            self.refresh_sub_board_spots(source_idx, destination_idx)
+            return True
+        return False
 
 
-    def get_cell_state(self, row, col):
-        
-
-
-    def _make_random_move(self, player_value):
+    def make_random_move(self, player_value):
         """Helper method to make a random move for any player."""
         non_empty_indices = [i for i, sub_board in enumerate(self.empty_spots) if sub_board != []]
         random_sub_board_idx = random.choice(non_empty_indices)
         random_spot = random.choice(self.empty_spots[random_sub_board_idx])
-        available_sub_board_indices = [i for i, val in enumerate(self.possible_sub_board_spots) if val == 1]
-        random_sub_board_idx = random.choice(available_sub_board_indices)
 
         self.board_state[random_sub_board_idx][random_spot] = player_value
         self.empty_spots[random_sub_board_idx].remove(random_spot)
 
+        available_sub_board_indices = [i for i, val in enumerate(self.possible_sub_board_spots) if val == 1]
+        random_sub_board_idx = random.choice(available_sub_board_indices)
+
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
         self.board_state[empty_sub_board_spot] = copy.deepcopy(self.board_state[random_sub_board_idx])
+        self.empty_spots[empty_sub_board_spot] = copy.deepcopy(self.empty_spots[random_sub_board_idx])
         self.board_state[random_sub_board_idx] = []
+        self.empty_spots[random_sub_board_idx] = []
         self.refresh_sub_board_spots(random_sub_board_idx, empty_sub_board_spot)
 
     def perform_random_rival_move(self):
-        self._make_random_move(player_value=2)
+        self.make_random_move(2)
 
     def perform_random_agent_move(self):
-        self._make_random_move(player_value=1)
-
+        self.make_random_move(1)
 
     def check_win(self):
         b = self.board_state
@@ -242,6 +256,72 @@ class FourInASquareGame:
 
 
     def print_board(self):
+        # ANSI color codes
+        RED = '\033[91m'
+        WHITE = '\033[97m'
+        GREY = '\033[90m'
+        RESET = '\033[0m'
+        
+        # Helper function to get cell symbol with color
+        def get_cell_symbol(value):
+            if value == 1:
+                return f"{RED}●{RESET}"
+            elif value == 2:
+                return f"{WHITE}●{RESET}"
+            else:
+                return "·"
+        
+        # Helper function to print a sub-board or empty space
+        def get_sub_board_display(sub_board_idx):
+            sub_board = self.board_state[sub_board_idx]
+            if sub_board == []:
+                # Empty sub-board - display as grey
+                return [
+                    f"   ",
+                    f"   "
+                ]
+            else:
+                # Regular sub-board with cells
+                return [
+                    f"{get_cell_symbol(sub_board[0])} {get_cell_symbol(sub_board[1])}",
+                    f"{get_cell_symbol(sub_board[2])} {get_cell_symbol(sub_board[3])}"
+                ]
+        
+        print("\n" + "="*15)
+        
+        # Print the 3x3 grid of sub-boards
+        for row in range(3):
+            # Each sub-board has 2 rows
+            for sub_row in range(2):
+                line = ""
+                for col in range(3):
+                    sub_board_idx = row * 3 + col
+                    display = get_sub_board_display(sub_board_idx)
+                    line += display[sub_row]
+                    if col < 2:
+                        line += " │ "
+                print(line)
+            
+            # Print separator between rows of sub-boards
+            if row < 2:
+                print("─"*4 + "┼" + "─"*5 + "┼" + "─"*4)
+        
+        print("="*15 + "\n")
+
+    def print_game_result(self):
+        result = self.check_win()
+        RED = '\033[91m'
+        WHITE = '\033[97m'
+        RESET = '\033[0m'
+        
+        if result == "Red wins":
+            print(f"{RED}🎉 Red wins! 🎉{RESET}")
+        elif result == "White wins":
+            print(f"{WHITE}🎉 White wins! 🎉{RESET}")
+        elif result == "Draw":
+            print("🤝 It's a draw! 🤝")
+        else:
+            print(f"Game status: {result}")
 
 
 if __name__ == "__main__":

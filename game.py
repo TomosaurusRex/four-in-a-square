@@ -172,9 +172,11 @@ class FourInASquareGame:
             else:
                 empty_sub_board_spot = self.possible_sub_board_spots.index(2)
                 self.board_state[best_move[0]][best_move[1]] = 1
-                self.board_state[empty_sub_board_spot] = copy.deepcopy(self.board_state[best_sub_board_to_move])
-                self.board_state[best_sub_board_to_move] = []
                 self.empty_spots[best_move[0]].remove(best_move[1])
+                self.board_state[empty_sub_board_spot] = copy.deepcopy(self.board_state[best_sub_board_to_move])
+                self.empty_spots[empty_sub_board_spot] = copy.deepcopy(self.empty_spots[best_sub_board_to_move])
+                self.board_state[best_sub_board_to_move] = []
+                self.empty_spots[best_sub_board_to_move] = []
                 self.refresh_sub_board_spots(best_sub_board_to_move, empty_sub_board_spot)
 
 
@@ -203,7 +205,9 @@ class FourInASquareGame:
             self.empty_spots[sub_board].remove(spot)
 
             self.board_state[destination_idx] = copy.deepcopy(self.board_state[source_idx])
+            self.empty_spots[destination_idx] = copy.deepcopy(self.empty_spots[source_idx])
             self.board_state[source_idx] = []
+            self.empty_spots[source_idx] = []
             self.refresh_sub_board_spots(source_idx, destination_idx)
             return True
         return False

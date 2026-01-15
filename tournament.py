@@ -21,6 +21,13 @@ class Tournament:
             self.save_file = "boards_and_scores.json"
 
     def run_games(self):
+        # Count initial boards
+        try:
+            with open(self.save_file, "r") as f:
+                initial_boards = len(json.load(f))
+        except FileNotFoundError:
+            initial_boards = 0
+        
         for i in range(self.games_number):
             if (i + 1) % 1000 == 0 or i == 0:
                 print(f"Game {i + 1}/{self.games_number}")
@@ -33,6 +40,15 @@ class Tournament:
                 self.stats_dict[result] += 1
             
             game.save_game_to_dict()
+        
+        # Count final boards and calculate new boards learned
+        try:
+            with open(self.save_file, "r") as f:
+                final_boards = len(json.load(f))
+        except FileNotFoundError:
+            final_boards = 0
+        
+        self.new_boards_learned = final_boards - initial_boards
 
     def print_tournament_result(self):
         print(f"\nResults for {self.games_number} games ({self.play_mode} mode):")
@@ -44,6 +60,7 @@ class Tournament:
             with open(self.save_file, "r") as f:
                 boards_and_scores = json.load(f)
             print(f"\nTotal board states in {self.save_file}: {len(boards_and_scores)}")
+            print(f"New boards learned during this tournament: {self.new_boards_learned}")
         except FileNotFoundError:
             print(f"\nNo board states saved yet in {self.save_file}.")
 

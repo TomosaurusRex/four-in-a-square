@@ -6,15 +6,18 @@ import os
 
 
 class FourInASquareGame:
-    def __init__(self, play_mode="RANDOM"):
+    def __init__(self, play_mode="RANDOM", load_json_file="boards_and_scores.json", save_json_file=None):
         self.board_state = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
         self.empty_spots = [[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]]
         self.game_boards = {}
         self.play_mode = play_mode
         self.possible_sub_board_spots = [0, 1, 0, 1, 2, 1, 0, 1, 0]
+        self.load_json_file = load_json_file
+        self.save_json_file = save_json_file if save_json_file else load_json_file
 
-        if os.path.exists("boards_and_scores.json"):
-            with open("boards_and_scores.json", "r") as f:
+        # Load from the specified file for learning
+        if os.path.exists(self.load_json_file):
+            with open(self.load_json_file, "r") as f:
                 self.boards_and_scores = json.load(f)
         else:
             self.boards_and_scores = {}
@@ -32,7 +35,7 @@ class FourInASquareGame:
             outcome = 0.5
 
         for i, board in enumerate(boards):
-            decay = 0.9 ** (num_boards - i - 1)
+            decay = 0.96 ** (num_boards - i - 1)
             self.game_boards[board] = outcome * decay
 
 
@@ -40,19 +43,25 @@ class FourInASquareGame:
         # First score the boards from this game
         self.score_boards()
         
-        # Then add them to the main dictionary with running averages
-        for key, value in self.game_boards.items():
-            if key in self.boards_and_scores:
-                num_of_appearances = self.boards_and_scores[key][0]
-                num_of_appearances += 1
-                avg_score = ((self.boards_and_scores[key][1] * (num_of_appearances - 1)) + value) / num_of_appearances
-                self.boards_and_scores[key] = (num_of_appearances, avg_score)
-            else:
-                self.boards_and_scores[key] = (1, value)
+        # Load existing save file data (might be different from load file)
+        save_data = {}
+        if os.path.exists(self.save_json_file):
+            with open(self.save_json_file, "r") as f:
+                save_data = json.load(f)
         
-        # Save to JSON file
-        with open("boards_and_scores.json", "w") as f:
-            json.dump(self.boards_and_scores, f)
+        # Add scored boards to save data with running averages
+        for key, value in self.game_boards.items():
+            if key in save_data:
+                num_of_appearances = save_data[key][0]
+                num_of_appearances += 1
+                avg_score = ((save_data[key][1] * (num_of_appearances - 1)) + value) / num_of_appearances
+                save_data[key] = (num_of_appearances, avg_score)
+            else:
+                save_data[key] = (1, value)
+        
+        # Save to the save JSON file
+        with open(self.save_json_file, "w") as f:
+            json.dump(save_data, f)
 
 
     @staticmethod
@@ -203,21 +212,21 @@ class FourInASquareGame:
     def make_random_move(self, player_value):
         """Helper method to make a random move for any player."""
         non_empty_indices = [i for i, sub_board in enumerate(self.empty_spots) if sub_board != []]
-        random_sub_board_idx = random.choice(non_empty_indices)
-        random_spot = random.choice(self.empty_spots[random_sub_board_idx])
+        place_sub_board_idx = random.choice(non_empty_indices)
+        random_spot = random.choice(self.empty_spots[place_sub_board_idx])
 
-        self.board_state[random_sub_board_idx][random_spot] = player_value
-        self.empty_spots[random_sub_board_idx].remove(random_spot)
+        self.board_state[place_sub_board_idx][random_spot] = player_value
+        self.empty_spots[place_sub_board_idx].remove(random_spot)
 
         available_sub_board_indices = [i for i, val in enumerate(self.possible_sub_board_spots) if val == 1]
-        random_sub_board_idx = random.choice(available_sub_board_indices)
+        move_sub_board_idx = random.choice(available_sub_board_indices)
 
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
-        self.board_state[empty_sub_board_spot] = copy.deepcopy(self.board_state[random_sub_board_idx])
-        self.empty_spots[empty_sub_board_spot] = copy.deepcopy(self.empty_spots[random_sub_board_idx])
-        self.board_state[random_sub_board_idx] = []
-        self.empty_spots[random_sub_board_idx] = []
-        self.refresh_sub_board_spots(random_sub_board_idx, empty_sub_board_spot)
+        self.board_state[empty_sub_board_spot] = copy.deepcopy(self.board_state[move_sub_board_idx])
+        self.empty_spots[empty_sub_board_spot] = copy.deepcopy(self.empty_spots[move_sub_board_idx])
+        self.board_state[move_sub_board_idx] = []
+        self.empty_spots[move_sub_board_idx] = []
+        self.refresh_sub_board_spots(move_sub_board_idx, empty_sub_board_spot)
 
     def perform_random_rival_move(self):
         self.make_random_move(2)

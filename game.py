@@ -8,13 +8,14 @@ import os
 class FourInASquareGame:
     # Class-level dictionaries - separate learning from saving
     learning_boards = {}  # Loaded from load_file for reference
+    greedy_boards = {}  # Loaded from greedy file for heuristic agent
     new_boards = {}  # Only new boards from this tournament
     
     # Statistics for greedy agent performance
     total_greedy_moves = 0
     random_fallback_moves = 0
     
-    def __init__(self, play_mode="RANDOM", load_json_file="boards_and_scores.json", save_json_file=None):
+    def __init__(self, play_mode="RANDOM", load_json_file="boards_and_scores.json", save_json_file=None, greedy_json_file="greedy_boards_and_scores.json"):
         self.board_state = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
         self.empty_spots = [[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]]
         self.game_boards = {}
@@ -22,11 +23,17 @@ class FourInASquareGame:
         self.possible_sub_board_spots = [0, 1, 0, 1, 2, 1, 0, 1, 0]
         self.load_json_file = load_json_file
         self.save_json_file = save_json_file if save_json_file else load_json_file
+        self.greedy_json_file = greedy_json_file
 
         # Load learning data once
         if not FourInASquareGame.learning_boards and os.path.exists(self.load_json_file):
             with open(self.load_json_file, "r") as f:
                 FourInASquareGame.learning_boards = json.load(f)
+        
+        # Load greedy data for heuristic agent
+        if not FourInASquareGame.greedy_boards and os.path.exists(self.greedy_json_file):
+            with open(self.greedy_json_file, "r") as f:
+                FourInASquareGame.greedy_boards = json.load(f)
         
         self.boards_and_scores = FourInASquareGame.learning_boards
         
@@ -163,6 +170,8 @@ class FourInASquareGame:
             if player_turn:
                 if self.play_mode == "RANDOM":
                     self.perform_random_agent_move()
+                elif self.play_mode == "HEURISTIC":
+                    self.perform_heuristic_agent_move()
                 else:
                     self.perform_greedy_agent_move()
             else:
@@ -301,32 +310,77 @@ class FourInASquareGame:
                                     return (i, spot, j)
         return None
     
-    def find_blocking_move(self):
-        """Find a move that blocks opponent from winning."""
-        for i in range(9):
-            if self.board_state[i] == []:
+    def is_move_safe(self, move):
+        """Check if a move gives the opponent an immediate winning opportunity.
+        
+        Returns True if the move is safe (doesn't give opponent a win).
+        Returns False if the move allows opponent to win on their next turn.
+        """
+        our_i, our_spot, our_j = move
+        
+        # Simulate OUR move
+        our_move = copy.deepcopy(self.board_state)
+        our_move[our_i][our_spot] = 1
+        
+        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+        our_board = copy.deepcopy(our_move)
+        our_board[empty_sub_board_spot] = copy.deepcopy(our_board[our_j])
+        our_board[our_j] = []
+        
+        # Calculate new empty spots after our move
+        new_empty_spots = [list(spots) for spots in self.empty_spots]
+        new_empty_spots[our_i] = [s for s in new_empty_spots[our_i] if s != our_spot]
+        new_empty_spots[empty_sub_board_spot] = copy.deepcopy(new_empty_spots[our_j])
+        new_empty_spots[our_j] = []
+        
+        # Calculate new possible sub board spots after our move
+        new_possible_spots = [0] * 9
+        new_possible_spots[our_j] = 2
+        board_3x3 = np.array(new_possible_spots).reshape(3, 3)
+        positions = np.where(board_3x3 == 2)
+        
+        if len(positions[0]) > 0:
+            source_row = positions[0][0]
+            source_col = positions[1][0]
+            if source_row - 1 >= 0:
+                board_3x3[source_row - 1, source_col] = 1
+            if source_row + 1 < 3:
+                board_3x3[source_row + 1, source_col] = 1
+            if source_col - 1 >= 0:
+                board_3x3[source_row, source_col - 1] = 1
+            if source_col + 1 < 3:
+                board_3x3[source_row, source_col + 1] = 1
+        
+        new_possible_spots = board_3x3.flatten().tolist()
+        new_possible_spots[empty_sub_board_spot] = 0
+        
+        # Check if opponent can win from this state
+        for opp_i in range(9):
+            if our_board[opp_i] == []:
                 continue
-                
-            for spot in self.empty_spots[i]:
-                opponent_move = copy.deepcopy(self.board_state)
-                opponent_move[i][spot] = 2
-                
-                for j in range(9):
-                    if self.possible_sub_board_spots[j] == 1:
-                        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
-                        opponent_board = copy.deepcopy(opponent_move)
-                        
-                        opponent_board[empty_sub_board_spot] = copy.deepcopy(opponent_board[j])
-                        opponent_board[j] = []
-                        
-                        board_6x6_opp = FourInASquareGame.board_to_6x6(opponent_board)
-                        
-                        for row in range(5):
-                            for col in range(5):
-                                block = board_6x6_opp[row:row+2, col:col+2]
-                                if np.all(block == 2):
-                                    return (i, spot, j)
-        return None
+            
+            for opp_spot in new_empty_spots[opp_i]:
+                for opp_j in range(9):
+                    if new_possible_spots[opp_j] != 1:
+                        continue
+                    
+                    opponent_response = copy.deepcopy(our_board)
+                    opponent_response[opp_i][opp_spot] = 2
+                    
+                    opp_empty_spot = new_possible_spots.index(2)
+                    opponent_final = copy.deepcopy(opponent_response)
+                    opponent_final[opp_empty_spot] = copy.deepcopy(opponent_final[opp_j])
+                    opponent_final[opp_j] = []
+                    
+                    board_6x6_opp = FourInASquareGame.board_to_6x6(opponent_final)
+                    
+                    for row in range(5):
+                        for col in range(5):
+                            block = board_6x6_opp[row:row+2, col:col+2]
+                            if np.all(block == 2):
+                                return False  # Move is unsafe
+        
+        return True  # Move is safe
     
     def execute_move(self, move, player_value=1):
         """Execute a move given as (sub_board_idx, spot_idx, sub_board_to_move)."""
@@ -342,37 +396,102 @@ class FourInASquareGame:
         self.refresh_sub_board_spots(sub_board_to_move, empty_sub_board_spot)
 
     def perform_heuristic_agent_move(self):
-        """Make a move using heuristics: win > block > random/greedy."""
+        """Make a move using heuristics: win > safe greedy > safe random > any move."""
         # Priority 1: Find a winning move
         winning_move = self.find_winning_move()
         if winning_move:
             self.execute_move(winning_move)
             return
         
-        # Priority 2: Block opponent's winning move
-        blocking_move = self.find_blocking_move()
-        if blocking_move:
-            self.execute_move(blocking_move)
+        # Priority 2: Try greedy move if it's safe
+        best_move = self.get_greedy_move()
+        if best_move and self.is_move_safe(best_move):
+            self.execute_move(best_move)
             return
         
-        # Priority 3: 50/50 between random and greedy
-        if random.random() < 0.5:
-            self.perform_random_agent_move()
-        else:
-            self.perform_greedy_agent_move()
+        # Priority 3: Try random moves until we find a safe one
+        # Collect all possible moves
+        all_possible_moves = []
+        for i in range(9):
+            if self.board_state[i] == []:
+                continue
+            for spot in self.empty_spots[i]:
+                for j in range(9):
+                    if self.possible_sub_board_spots[j] == 1:
+                        all_possible_moves.append((i, spot, j))
+        
+        # Shuffle and try to find a safe random move
+        random.shuffle(all_possible_moves)
+        for move in all_possible_moves:
+            if self.is_move_safe(move):
+                self.execute_move(move)
+                return
+        
+        # Priority 4: No safe moves exist, just execute any move
+        if all_possible_moves:
+            self.execute_move(all_possible_moves[0])
+    
+    def get_greedy_move(self):
+        """Get the best greedy move without executing it."""
+        highest_score = -1
+        best_move = None
+        best_sub_board_to_move = None
+        
+        # Use greedy_boards for heuristic mode, otherwise use regular boards_and_scores
+        score_dict = FourInASquareGame.greedy_boards if self.play_mode == "HEURISTIC" else self.boards_and_scores
+
+        for i in range(9):
+            for spot in self.empty_spots[i]:
+                possible_move = copy.deepcopy(self.board_state)
+                possible_move[i][spot] = 1
+
+                for j in range(9):
+                    if self.possible_sub_board_spots[j] == 1:
+                        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+                        possible_sub_board_move = copy.deepcopy(possible_move)
+
+                        possible_sub_board_move[empty_sub_board_spot] = copy.deepcopy(possible_sub_board_move[j])
+                        possible_sub_board_move[j] = []
+
+                        possible_board_state_string = FourInASquareGame.board_to_string(possible_sub_board_move)
+
+                        if possible_board_state_string in score_dict:
+                            score = score_dict[possible_board_state_string][1]
+                        else:
+                            score = -1
+
+                        if score > highest_score:
+                            highest_score = score
+                            best_move = (i, spot)
+                            best_sub_board_to_move = j
+        
+        if best_move and best_sub_board_to_move is not None:
+            return (best_move[0], best_move[1], best_sub_board_to_move)
+        return None
 
 
     def check_win(self):
         board_6x6 = FourInASquareGame.board_to_6x6(self.board_state)
+        
+        red_wins = False
+        white_wins = False
         
         for i in range(5):
             for j in range(5):
                 # Check 2x2 block
                 block = board_6x6[i:i+2, j:j+2]
                 if np.all(block == 1):
-                    return "Red wins"
+                    red_wins = True
                 elif np.all(block == 2):
-                    return "White wins"
+                    white_wins = True
+        
+        # Check if both players win simultaneously (draw)
+        if red_wins and white_wins:
+            return "Draw"
+        elif red_wins:
+            return "Red wins"
+        elif white_wins:
+            return "White wins"
                 
         if any(spot != [] for spot in self.empty_spots):
             return "Ongoing"

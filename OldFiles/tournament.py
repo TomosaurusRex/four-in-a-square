@@ -1,5 +1,4 @@
 from game import FourInASquareGame
-import json
 
 
 class Tournament:
@@ -23,52 +22,46 @@ class Tournament:
         # Set up play mode and file paths based on choice
         if choice == "1":
             self.play_mode = "RANDOM"
-            self.load_file = "boards_and_scores.json"
-            self.save_file = "boards_and_scores.json"
-            self.greedy_file = "greedy_boards_and_scores.json"
+            self.load_file = "board_dicts/boards_and_scores.pkl"
+            self.save_file = "board_dicts/boards_and_scores.pkl"
+            self.greedy_file = "board_dicts/greedy_boards_and_scores.pkl"
         elif choice == "2":
             self.play_mode = "GREEDY"
-            self.load_file = "boards_and_scores.json"
-            self.save_file = "greedy_boards_and_scores.json"
-            self.greedy_file = "greedy_boards_and_scores.json"
+            self.load_file = "board_dicts/boards_and_scores.pkl"
+            self.save_file = "board_dicts/greedy_boards_and_scores.pkl"
+            self.greedy_file = "board_dicts/greedy_boards_and_scores.pkl"
         elif choice == "3":
             self.play_mode = "GREEDY"
-            self.load_file = "greedy_boards_and_scores.json"
-            self.save_file = "greedy_boards_and_scores.json"
-            self.greedy_file = "greedy_boards_and_scores.json"
+            self.load_file = "board_dicts/greedy_boards_and_scores.pkl"
+            self.save_file = "board_dicts/greedy_boards_and_scores.pkl"
+            self.greedy_file = "board_dicts/greedy_boards_and_scores.pkl"
         elif choice == "4":
             self.play_mode = "HEURISTIC"
-            self.load_file = "heuristic_boards_and_scores.json"
-            self.save_file = "heuristic_boards_and_scores.json"
-            self.greedy_file = "greedy_boards_and_scores.json"
+            self.load_file = "board_dicts/heuristic_boards_and_scores.pkl"
+            self.save_file = "board_dicts/heuristic_boards_and_scores.pkl"
+            self.greedy_file = "board_dicts/greedy_boards_and_scores.pkl"
         else:
             print("Invalid choice, defaulting to Random")
             self.play_mode = "RANDOM"
-            self.load_file = "boards_and_scores.json"
-            self.save_file = "boards_and_scores.json"
-            self.greedy_file = "greedy_boards_and_scores.json"
+            self.load_file = "board_dicts/boards_and_scores.pkl"
+            self.save_file = "board_dicts/boards_and_scores.pkl"
+            self.greedy_file = "board_dicts/greedy_boards_and_scores.pkl"
 
     def run_games(self):
-        # Load initial boards from save file only
-        try:
-            with open(self.save_file, "r") as f:
-                initial_save_data = json.load(f)
-                initial_boards = len(initial_save_data)
-        except FileNotFoundError:
-            initial_boards = 0
-        
         # Clear new_boards and load the learning data
         FourInASquareGame.new_boards = {}
         FourInASquareGame.greedy_boards = {}
         FourInASquareGame.total_greedy_moves = 0
         FourInASquareGame.random_fallback_moves = 0
-        dummy = FourInASquareGame(self.play_mode, load_json_file=self.load_file, save_json_file=self.save_file, greedy_json_file=self.greedy_file)
+        
+        # Create one game instance and reuse it
+        game = FourInASquareGame(self.play_mode, load_file=self.load_file, save_file=self.save_file, greedy_file=self.greedy_file)
+        initial_boards = len(FourInASquareGame.learning_boards)
         
         for i in range(self.games_number):
             if (i + 1) % 1000 == 0 or i == 0:
                 print(f"Game {i + 1}/{self.games_number}")
 
-            game = FourInASquareGame(self.play_mode, load_json_file=self.load_file, save_json_file=self.save_file, greedy_json_file=self.greedy_file)
             game.play()
             
             result = game.check_win()
@@ -76,17 +69,14 @@ class Tournament:
                 self.stats_dict[result] += 1
             
             game.save_game_to_dict()
+            game.reset_game()
         
         # Save once at the end
         FourInASquareGame.save_all_to_file(self.save_file)
         
-        # Count final boards from save file
-        with open(self.save_file, "r") as f:
-            final_save_data = json.load(f)
-            final_boards = len(final_save_data)
-        
-        self.new_boards_learned = final_boards - initial_boards
-        self.total_boards = final_boards
+        # Count boards from memory (no extra file read)
+        self.total_boards = len(FourInASquareGame.learning_boards)
+        self.new_boards_learned = self.total_boards - initial_boards
 
     def print_tournament_result(self):
         print(f"\nResults for {self.games_number} games ({self.play_mode} mode):")

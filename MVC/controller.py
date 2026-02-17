@@ -135,6 +135,11 @@ class GameController:
     def handle_game_end(self, result):
         """Handle game end (show result to player)"""
         print(f"Game over: {result}")
+        
+        # Save the game boards to the new_boards dictionary
+        self.model.save_game_to_dict()
+        
+        # Show the result to the player
         self.view.game.show_game_result(result)
     
     def get_board_state(self):

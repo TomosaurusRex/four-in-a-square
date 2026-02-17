@@ -8,13 +8,28 @@ import os
 class GameModel:
     """Model for Four In A Square game - handles game state and logic"""
     
-    def __init__(self):
+    # Class-level dictionaries for scoring and saving
+    greedy_boards = {}  # Loaded from greedy file for heuristic agent
+    new_boards = {}  # Only new boards from this session
+    
+    def __init__(self, greedy_json_file="board_dicts/greedy_boards_and_scores.json"):
         """Initialize game model for player vs heuristic AI."""
-        self.greedy_boards = {}  # Loaded from greedy file for heuristic agent
-        self.new_boards = {}  # Only new boards from this tournament
+        self.greedy_json_file = greedy_json_file
+        self.game_boards = {}  # Track boards played in current game
 
         self.total_greedy_moves = 0
         self.random_fallback_moves = 0
+
+        # Ensure board_dicts directory exists
+        os.makedirs("board_dicts", exist_ok=True)
+
+        # Load greedy data for heuristic agent (one time only)
+        if not GameModel.greedy_boards and os.path.exists(self.greedy_json_file):
+            with open(self.greedy_json_file, "r") as f:
+                GameModel.greedy_boards = json.load(f)
+                print(f"Loaded {len(GameModel.greedy_boards)} boards from {self.greedy_json_file}")
+        elif not GameModel.greedy_boards:
+            print(f"Warning: {self.greedy_json_file} not found. Heuristic agent will play randomly.")
 
         # Game state
         self.board_state = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], 
@@ -36,6 +51,7 @@ class GameModel:
                            [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]]
         self.possible_sub_board_spots = [0, 1, 0, 1, 2, 1, 0, 1, 0]
         self.current_player = 1  # 1 = Red (AI), 2 = White (Player)
+        self.game_boards = {}  # Clear game board history
         
     def is_valid_move(self, sub_board_idx, spot_idx):
         """Check if placing a piece at this position is valid"""
@@ -79,6 +95,10 @@ class GameModel:
         
         # Update possible sub-board spots
         self.refresh_sub_board_spots(source_idx, destination_idx)
+        
+        # Track board state for learning (only for AI moves)
+        if player_value == 1:  # Only track AI (Red) moves
+            self.game_boards[GameModel.board_to_string(self.board_state)] = 0
         
         # Switch player if requested
         if switch_player:
@@ -158,19 +178,60 @@ class GameModel:
         return self.current_player
 
     def score_boards(self):
+        """Score all boards from the current game based on outcome."""
         num_boards = len(self.game_boards)
         boards = list(self.game_boards.keys())
 
         if self.check_win() == "White wins":
-            outcome = 0
+            outcome = 0  # Bad for AI (Red)
         elif self.check_win() == "Red wins":
-            outcome = 1
+            outcome = 1  # Good for AI (Red)
         else:
-            outcome = 0.5
+            outcome = 0.5  # Draw
 
         for i, board in enumerate(boards):
             decay = 0.96 ** (num_boards - i - 1)
             self.game_boards[board] = outcome * decay
+    
+    def save_game_to_dict(self):
+        """Score and save current game boards to the class-level new_boards dictionary."""
+        self.score_boards()
+        
+        # Update new_boards dictionary (session only)
+        for key, value in self.game_boards.items():
+            if key in GameModel.new_boards:
+                num, avg = GameModel.new_boards[key]
+                new_avg = ((avg * num) + value) / (num + 1)
+                GameModel.new_boards[key] = (num + 1, new_avg)
+            else:
+                GameModel.new_boards[key] = (1, value)
+    
+    @staticmethod
+    def save_all_to_file(filename):
+        """Save all new boards from this session to file, merging with existing data."""
+        # Ensure board_dicts directory exists
+        os.makedirs("board_dicts", exist_ok=True)
+        
+        # Load existing save file
+        save_data = {}
+        if os.path.exists(filename):
+            with open(filename, "r") as f:
+                save_data = json.load(f)
+        
+        # Merge new boards with existing save data
+        for key, value in GameModel.new_boards.items():
+            if key in save_data:
+                num, avg = save_data[key]
+                new_num, new_avg = value
+                merged_avg = ((avg * num) + (new_avg * new_num)) / (num + new_num)
+                save_data[key] = (num + new_num, merged_avg)
+            else:
+                save_data[key] = value
+        
+        with open(filename, "w") as f:
+            json.dump(save_data, f)
+        
+        print(f"Saved {len(GameModel.new_boards)} new boards to {filename}")
 
     @staticmethod
     def board_to_string(board_state):
@@ -352,8 +413,8 @@ class GameModel:
         best_move = None
         best_sub_board_to_move = None
         
-        # Use greedy_boards for heuristic mode
-        score_dict = self.greedy_boards
+        # Use class-level greedy_boards for heuristic mode
+        score_dict = GameModel.greedy_boards
 
         for i in range(9):
             if self.board_state[i] == []:

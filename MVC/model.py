@@ -1,7 +1,5 @@
-import numpy as np
 import random
 import json
-import copy
 import os
 
 
@@ -9,27 +7,42 @@ class GameModel:
     """Model for Four In A Square game - handles game state and logic"""
     
     # Class-level dictionaries for scoring and saving
-    greedy_boards = {}  # Loaded from greedy file for heuristic agent
     new_boards = {}  # Only new boards from this session
     
-    def __init__(self, greedy_json_file="board_dicts/greedy_boards_and_scores.json"):
-        """Initialize game model for player vs heuristic AI."""
-        self.greedy_json_file = greedy_json_file
-        self.game_boards = {}  # Track boards played in current game
+    # Pre-computed neighbor lookup for the 3x3 sub-board grid
+    NEIGHBORS = {
+        0: [1, 3], 1: [0, 2, 4], 2: [1, 5],
+        3: [0, 4, 6], 4: [1, 3, 5, 7], 5: [2, 4, 8],
+        6: [3, 7], 7: [4, 6, 8], 8: [5, 7]
+    }
 
-        self.total_greedy_moves = 0
-        self.random_fallback_moves = 0
+    @staticmethod
+    def _get_cell(board_state, row, col):
+        """Get cell value at (row, col) in the 6x6 representation."""
+        sb = (row // 2) * 3 + (col // 2)
+        if not board_state[sb]:
+            return 0
+        return board_state[sb][(row % 2) * 2 + (col % 2)]
+
+    @staticmethod
+    def _check_player_wins(board_state, player):
+        """Check if player has a 2x2 block anywhere on the board."""
+        get = GameModel._get_cell
+        for r in range(5):
+            for c in range(5):
+                if (get(board_state, r, c) == player and
+                    get(board_state, r, c + 1) == player and
+                    get(board_state, r + 1, c) == player and
+                    get(board_state, r + 1, c + 1) == player):
+                    return True
+        return False
+    
+    def __init__(self):
+        """Initialize game model for player vs heuristic AI."""
+        self.game_boards = {}  # Track boards played in current game
 
         # Ensure board_dicts directory exists
         os.makedirs("board_dicts", exist_ok=True)
-
-        # Load greedy data for heuristic agent (one time only)
-        if not GameModel.greedy_boards and os.path.exists(self.greedy_json_file):
-            with open(self.greedy_json_file, "r") as f:
-                GameModel.greedy_boards = json.load(f)
-                print(f"Loaded {len(GameModel.greedy_boards)} boards from {self.greedy_json_file}")
-        elif not GameModel.greedy_boards:
-            print(f"Warning: {self.greedy_json_file} not found. Heuristic agent will play randomly.")
 
         # Game state
         self.board_state = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], 
@@ -88,8 +101,8 @@ class GameModel:
         self.empty_spots[sub_board_idx].remove(spot_idx)
         
         # Move the sub-board
-        self.board_state[destination_idx] = copy.deepcopy(self.board_state[source_idx])
-        self.empty_spots[destination_idx] = copy.deepcopy(self.empty_spots[source_idx])
+        self.board_state[destination_idx] = list(self.board_state[source_idx])
+        self.empty_spots[destination_idx] = list(self.empty_spots[source_idx])
         self.board_state[source_idx] = []
         self.empty_spots[source_idx] = []
         
@@ -119,44 +132,15 @@ class GameModel:
         """Update which sub-boards can be selected for moving"""
         self.possible_sub_board_spots = [0] * 9
         self.possible_sub_board_spots[source_idx] = 2
-
-        board_3x3 = np.array(self.possible_sub_board_spots).reshape(3, 3)
-        positions = np.where(board_3x3 == 2)
-        
-        if len(positions[0]) > 0:
-            source_row = positions[0][0]
-            source_col = positions[1][0]
-            
-            # Set adjacent tiles (no diagonals)
-            if source_row - 1 >= 0:
-                board_3x3[source_row - 1, source_col] = 1
-            if source_row + 1 < 3:
-                board_3x3[source_row + 1, source_col] = 1
-            if source_col - 1 >= 0:
-                board_3x3[source_row, source_col - 1] = 1
-            if source_col + 1 < 3:
-                board_3x3[source_row, source_col + 1] = 1
-
-        self.possible_sub_board_spots = board_3x3.flatten().tolist()
+        for n in GameModel.NEIGHBORS[source_idx]:
+            self.possible_sub_board_spots[n] = 1
         self.possible_sub_board_spots[destination_idx] = 0
     
     def check_win(self):
         """Check game state: 'Red wins', 'White wins', 'Draw', or 'Ongoing'"""
-        board_6x6 = GameModel.board_to_6x6(self.board_state)
+        red_wins = GameModel._check_player_wins(self.board_state, 1)
+        white_wins = GameModel._check_player_wins(self.board_state, 2)
         
-        red_wins = False
-        white_wins = False
-        
-        for i in range(5):
-            for j in range(5):
-                # Check 2x2 block
-                block = board_6x6[i:i+2, j:j+2]
-                if np.all(block == 1):
-                    red_wins = True
-                elif np.all(block == 2):
-                    white_wins = True
-        
-        # Check if both players win simultaneously (draw)
         if red_wins and white_wins:
             return "Draw"
         elif red_wins:
@@ -244,108 +228,77 @@ class GameModel:
                     board_state_string += "1" if cell == 1 else "2" if cell == 2 else "0"
         return board_state_string
     
-    @staticmethod
-    def board_to_6x6(board_state):
-        """Convert 9 sub-boards (3x3 grid of 2x2 boards) into one 6x6 array."""
-        board_6x6 = np.zeros((6, 6), dtype=int)
-        
-        for i in range(9):
-            # Determine which 2x2 section of the 6x6 board this sub-board occupies
-            sub_board_row = i // 3  # 0, 1, or 2
-            sub_board_col = i % 3   # 0, 1, or 2
-            
-            # Starting position in the 6x6 array
-            start_row = sub_board_row * 2
-            start_col = sub_board_col * 2
-            
-            # Fill in the 2x2 section
-            if board_state[i] != []:
-                board_6x6[start_row][start_col] = board_state[i][0]
-                board_6x6[start_row][start_col + 1] = board_state[i][1]
-                board_6x6[start_row + 1][start_col] = board_state[i][2]
-                board_6x6[start_row + 1][start_col + 1] = board_state[i][3]
-            else:
-                board_6x6[start_row][start_col] = 0
-                board_6x6[start_row][start_col + 1] = 0
-                board_6x6[start_row + 1][start_col] = 0
-                board_6x6[start_row + 1][start_col + 1] = 0
-        
-        return board_6x6
-    
     def find_winning_move(self):
-        """Find a move that wins the game for player 1 (AI)."""
+        """Find a move that wins the game for player 1 (AI).
+        Uses mutate/unmake for zero-copy performance."""
+        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+
         for i in range(9):
-            if self.board_state[i] == []:
+            if not self.board_state[i]:
                 continue
                 
             for spot in self.empty_spots[i]:
-                possible_move = copy.deepcopy(self.board_state)
-                possible_move[i][spot] = 1
+                # Mutate: place piece
+                self.board_state[i][spot] = 1
                 
                 for j in range(9):
                     if self.possible_sub_board_spots[j] == 1:
-                        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
-                        possible_board = copy.deepcopy(possible_move)
+                        # Mutate: sub-board swap
+                        saved_empty = self.board_state[empty_sub_board_spot]
+                        self.board_state[empty_sub_board_spot] = list(self.board_state[j])
+                        saved_j = self.board_state[j]
+                        self.board_state[j] = []
                         
-                        possible_board[empty_sub_board_spot] = copy.deepcopy(possible_board[j])
-                        possible_board[j] = []
+                        if GameModel._check_player_wins(self.board_state, 1):
+                            # Unmake before returning
+                            self.board_state[j] = saved_j
+                            self.board_state[empty_sub_board_spot] = saved_empty
+                            self.board_state[i][spot] = 0
+                            return (i, spot, j)
                         
-                        board_6x6 = GameModel.board_to_6x6(possible_board)
-                        
-                        for row in range(5):
-                            for col in range(5):
-                                block = board_6x6[row:row+2, col:col+2]
-                                if np.all(block == 1):
-                                    return (i, spot, j)
+                        # Unmake sub-board swap
+                        self.board_state[j] = saved_j
+                        self.board_state[empty_sub_board_spot] = saved_empty
+                
+                # Unmake piece placement
+                self.board_state[i][spot] = 0
+
         return None
     
     def is_move_safe(self, move):
         """Check if a move gives the opponent an immediate winning opportunity.
         
+        Uses lightweight copy + mutate/unmake for opponent simulation.
         Returns True if the move is safe (doesn't give opponent a win).
         Returns False if the move allows opponent to win on their next turn.
         """
         our_i, our_spot, our_j = move
-        
-        # Simulate OUR move
-        our_move = copy.deepcopy(self.board_state)
-        our_move[our_i][our_spot] = 1
-        
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
-        our_board = copy.deepcopy(our_move)
-        our_board[empty_sub_board_spot] = copy.deepcopy(our_board[our_j])
+        
+        # Simulate our move with lightweight copy
+        our_board = [list(sub) if sub else [] for sub in self.board_state]
+        our_board[our_i][our_spot] = 1
+        our_board[empty_sub_board_spot] = list(our_board[our_j])
         our_board[our_j] = []
         
         # Calculate new empty spots after our move
         new_empty_spots = [list(spots) for spots in self.empty_spots]
         new_empty_spots[our_i] = [s for s in new_empty_spots[our_i] if s != our_spot]
-        new_empty_spots[empty_sub_board_spot] = copy.deepcopy(new_empty_spots[our_j])
+        new_empty_spots[empty_sub_board_spot] = list(new_empty_spots[our_j])
         new_empty_spots[our_j] = []
         
-        # Calculate new possible sub board spots after our move
+        # Calculate new possible sub board spots using NEIGHBORS
         new_possible_spots = [0] * 9
         new_possible_spots[our_j] = 2
-        board_3x3 = np.array(new_possible_spots).reshape(3, 3)
-        positions = np.where(board_3x3 == 2)
-        
-        if len(positions[0]) > 0:
-            source_row = positions[0][0]
-            source_col = positions[1][0]
-            if source_row - 1 >= 0:
-                board_3x3[source_row - 1, source_col] = 1
-            if source_row + 1 < 3:
-                board_3x3[source_row + 1, source_col] = 1
-            if source_col - 1 >= 0:
-                board_3x3[source_row, source_col - 1] = 1
-            if source_col + 1 < 3:
-                board_3x3[source_row, source_col + 1] = 1
-        
-        new_possible_spots = board_3x3.flatten().tolist()
+        for n in GameModel.NEIGHBORS[our_j]:
+            new_possible_spots[n] = 1
         new_possible_spots[empty_sub_board_spot] = 0
         
-        # Check if opponent can win from this state
+        opp_empty_spot = new_possible_spots.index(2)
+
+        # Check if opponent can win from this state using mutate/unmake
         for opp_i in range(9):
-            if our_board[opp_i] == []:
+            if not our_board[opp_i]:
                 continue
             
             for opp_spot in new_empty_spots[opp_i]:
@@ -353,96 +306,143 @@ class GameModel:
                     if new_possible_spots[opp_j] != 1:
                         continue
                     
-                    opponent_response = copy.deepcopy(our_board)
-                    opponent_response[opp_i][opp_spot] = 2
+                    # Mutate: place opponent piece
+                    saved_cell = our_board[opp_i][opp_spot]
+                    our_board[opp_i][opp_spot] = 2
+
+                    # Mutate: sub-board swap
+                    saved_opp_empty = our_board[opp_empty_spot]
+                    saved_opp_j = our_board[opp_j]
+                    our_board[opp_empty_spot] = list(our_board[opp_j])
+                    our_board[opp_j] = []
                     
-                    opp_empty_spot = new_possible_spots.index(2)
-                    opponent_final = copy.deepcopy(opponent_response)
-                    opponent_final[opp_empty_spot] = copy.deepcopy(opponent_final[opp_j])
-                    opponent_final[opp_j] = []
+                    if GameModel._check_player_wins(our_board, 2):
+                        return False  # Move is unsafe
                     
-                    board_6x6_opp = GameModel.board_to_6x6(opponent_final)
-                    
-                    for row in range(5):
-                        for col in range(5):
-                            block = board_6x6_opp[row:row+2, col:col+2]
-                            if np.all(block == 2):
-                                return False  # Move is unsafe
+                    # Unmake sub-board swap and piece placement
+                    our_board[opp_j] = saved_opp_j
+                    our_board[opp_empty_spot] = saved_opp_empty
+                    our_board[opp_i][opp_spot] = saved_cell
         
         return True  # Move is safe
 
+    @staticmethod
+    def _evaluate_position(board_state, player):
+        """Evaluate board position using 2x2 window scanning.
+        
+        Scores the board from `player`'s perspective by classifying
+        every 2x2 window on the 6x6 grid.
+        
+        Returns (score, num_three_threats).
+        """
+        get = GameModel._get_cell
+        opponent = 3 - player
+        score = 0
+        three_threats = 0
+
+        for r in range(5):
+            for c in range(5):
+                tl = get(board_state, r, c)
+                tr = get(board_state, r, c + 1)
+                bl = get(board_state, r + 1, c)
+                br = get(board_state, r + 1, c + 1)
+
+                mine = (tl == player) + (tr == player) + (bl == player) + (br == player)
+                theirs = (tl == opponent) + (tr == opponent) + (bl == opponent) + (br == opponent)
+                empty = 4 - mine - theirs
+
+                # Dead window (both colors present) — skip
+                if mine > 0 and theirs > 0:
+                    continue
+
+                # Our formations
+                if mine == 4:
+                    score += 10000
+                elif mine == 3 and empty == 1:
+                    score += 400
+                    three_threats += 1
+                elif mine == 2 and empty == 2:
+                    score += 40
+                elif mine == 1 and empty == 3:
+                    score += 5
+
+                # Opponent formations
+                elif theirs == 3 and empty == 1:
+                    score -= 500
+                elif theirs == 2 and empty == 2:
+                    score -= 25
+
+        # Fork bonus: 2+ three-threats is nearly unstoppable
+        if three_threats >= 2:
+            score += 600
+
+        return score, three_threats
+
     def perform_heuristic_agent_move(self):
-        """Make a move using heuristics: win > safe greedy > safe random > any move."""
-        # Priority 1: Find a winning move
+        """Make a move using heuristics:
+        1. Instant win -> play it
+        2. Score all moves via window evaluation
+        3. Safety-check top candidates
+        4. Play highest-scoring safe move
+        """
+        # Priority 1: Find a winning move (early exit)
         winning_move = self.find_winning_move()
         if winning_move:
             self.execute_move(*winning_move, player_value=1)
             return
-        
-        # Priority 2: Try greedy move if it's safe
-        best_move = self.get_greedy_move()
-        if best_move and self.is_move_safe(best_move):
-            self.execute_move(*best_move, player_value=1)
-            return
-        
-        # Priority 3: Try random moves until we find a safe one
-        # Collect all possible moves
-        all_possible_moves = []
+
+        # Collect all legal moves and score them
+        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+        scored_moves = []
+
         for i in range(9):
-            if self.board_state[i] == []:
+            if not self.board_state[i]:
                 continue
             for spot in self.empty_spots[i]:
+                # Mutate: place piece
+                self.board_state[i][spot] = 1
+
                 for j in range(9):
-                    if self.possible_sub_board_spots[j] == 1:
-                        all_possible_moves.append((i, spot, j))
-        
-        # Shuffle and try to find a safe random move
-        random.shuffle(all_possible_moves)
-        for move in all_possible_moves:
-            if self.is_move_safe(move):
-                self.execute_move(*move, player_value=1)
+                    if self.possible_sub_board_spots[j] != 1:
+                        continue
+
+                    # Mutate: sub-board swap
+                    saved_empty = self.board_state[empty_sub_board_spot]
+                    self.board_state[empty_sub_board_spot] = list(self.board_state[j])
+                    saved_j = self.board_state[j]
+                    self.board_state[j] = []
+
+                    # Score the resulting position
+                    score, _ = GameModel._evaluate_position(self.board_state, 1)
+
+                    scored_moves.append((score, i, spot, j))
+
+                    # Unmake sub-board swap
+                    self.board_state[j] = saved_j
+                    self.board_state[empty_sub_board_spot] = saved_empty
+
+                # Unmake piece placement
+                self.board_state[i][spot] = 0
+
+        if not scored_moves:
+            return  # No legal moves
+
+        # Sort descending by score
+        scored_moves.sort(key=lambda x: x[0], reverse=True)
+
+        # Safety-check top candidates (max 5) to avoid expensive full scan
+        TOP_N = 5
+        for score, i, spot, j in scored_moves[:TOP_N]:
+            if self.is_move_safe((i, spot, j)):
+                self.execute_move(i, spot, j, player_value=1)
                 return
-        
-        # Priority 4: No safe moves exist, just execute any move
-        if all_possible_moves:
-            self.execute_move(*all_possible_moves[0], player_value=1)
-    
-    def get_greedy_move(self):
-        """Get the best greedy move without executing it."""
-        highest_score = -1
-        best_move = None
-        best_sub_board_to_move = None
-        
-        # Use class-level greedy_boards for heuristic mode
-        score_dict = GameModel.greedy_boards
 
-        for i in range(9):
-            if self.board_state[i] == []:
-                continue
-            for spot in self.empty_spots[i]:
-                possible_move = copy.deepcopy(self.board_state)
-                possible_move[i][spot] = 1
+        # If none of the top moves are safe, try the rest
+        for score, i, spot, j in scored_moves[TOP_N:]:
+            if self.is_move_safe((i, spot, j)):
+                self.execute_move(i, spot, j, player_value=1)
+                return
 
-                for j in range(9):
-                    if self.possible_sub_board_spots[j] == 1:
-                        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
-                        possible_sub_board_move = copy.deepcopy(possible_move)
-
-                        possible_sub_board_move[empty_sub_board_spot] = copy.deepcopy(possible_sub_board_move[j])
-                        possible_sub_board_move[j] = []
-
-                        possible_board_state_string = GameModel.board_to_string(possible_sub_board_move)
-
-                        if possible_board_state_string in score_dict:
-                            score = score_dict[possible_board_state_string][1]
-                        else:
-                            score = -1
-
-                        if score > highest_score:
-                            highest_score = score
-                            best_move = (i, spot)
-                            best_sub_board_to_move = j
-        
-        if best_move and best_sub_board_to_move is not None:
-            return (best_move[0], best_move[1], best_sub_board_to_move)
-        return None
+        # No safe moves exist — play the highest-scored move anyway
+        _, i, spot, j = scored_moves[0]
+        self.execute_move(i, spot, j, player_value=1)

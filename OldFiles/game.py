@@ -363,49 +363,134 @@ class FourInASquareGame:
         self.empty_spots[sub_board_to_move] = []
         self.refresh_sub_board_spots(sub_board_to_move, empty_sub_board_spot)
 
+    @staticmethod
+    def _evaluate_position(board_state, player):
+        """Evaluate board position using 2x2 window scanning.
+        
+        Scores the board from `player`'s perspective by classifying
+        every 2x2 window on the 6x6 grid.
+        
+        Returns (score, num_three_threats) where num_three_threats is
+        how many windows have 3-of-ours + 1-empty (for fork detection).
+        """
+        get = FourInASquareGame._get_cell
+        opponent = 3 - player
+        score = 0
+        three_threats = 0
+
+        for r in range(5):
+            for c in range(5):
+                tl = get(board_state, r, c)
+                tr = get(board_state, r, c + 1)
+                bl = get(board_state, r + 1, c)
+                br = get(board_state, r + 1, c + 1)
+
+                mine = (tl == player) + (tr == player) + (bl == player) + (br == player)
+                theirs = (tl == opponent) + (tr == opponent) + (bl == opponent) + (br == opponent)
+                empty = 4 - mine - theirs
+
+                # Dead window (both colors present) — skip
+                if mine > 0 and theirs > 0:
+                    continue
+
+                # Our formations
+                if mine == 4:
+                    score += 10000  # Win
+                elif mine == 3 and empty == 1:
+                    score += 400
+                    three_threats += 1
+                elif mine == 2 and empty == 2:
+                    score += 40
+                elif mine == 1 and empty == 3:
+                    score += 5
+
+                # Opponent formations
+                elif theirs == 3 and empty == 1:
+                    score -= 500  # Must block
+                elif theirs == 2 and empty == 2:
+                    score -= 25
+
+        # Fork bonus: 2+ three-threats is nearly unstoppable
+        if three_threats >= 2:
+            score += 600
+
+        return score, three_threats
+
     def perform_heuristic_agent_move(self):
-        """Make a move using heuristics: win > safe greedy > safe random > any move."""
-        # Priority 1: Find a winning move
+        """Make a move using heuristics:
+        1. Instant win → play it
+        2. Score all moves via window evaluation
+        3. Safety-check top candidates
+        4. Play highest-scoring safe move
+        """
+        # Priority 1: Find a winning move (early exit)
         winning_move = self.find_winning_move()
         if winning_move:
             self.execute_move(winning_move)
             return
-        
-        # Priority 2: Try greedy move if it's safe
-        best_move = self.get_greedy_move()
-        if best_move and self.is_move_safe(best_move):
-            self.execute_move(best_move)
-            return
-        
-        # Priority 3: Try random moves until we find a safe one
-        # Collect all possible moves
-        all_possible_moves = []
+
+        # Collect all legal moves and score them
+        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+        scored_moves = []
+
         for i in range(9):
-            if self.board_state[i] == []:
+            if not self.board_state[i]:
                 continue
             for spot in self.empty_spots[i]:
+                # Mutate: place piece
+                self.board_state[i][spot] = 1
+
                 for j in range(9):
-                    if self.possible_sub_board_spots[j] == 1:
-                        all_possible_moves.append((i, spot, j))
-        
-        # Shuffle and try to find a safe random move
-        random.shuffle(all_possible_moves)
-        for move in all_possible_moves:
-            if self.is_move_safe(move):
-                self.execute_move(move)
+                    if self.possible_sub_board_spots[j] != 1:
+                        continue
+
+                    # Mutate: sub-board swap
+                    saved_empty = self.board_state[empty_sub_board_spot]
+                    self.board_state[empty_sub_board_spot] = list(self.board_state[j])
+                    saved_j = self.board_state[j]
+                    self.board_state[j] = []
+
+                    # Score the resulting position
+                    score, _ = FourInASquareGame._evaluate_position(self.board_state, 1)
+
+                    scored_moves.append((score, i, spot, j))
+
+                    # Unmake sub-board swap
+                    self.board_state[j] = saved_j
+                    self.board_state[empty_sub_board_spot] = saved_empty
+
+                # Unmake piece placement
+                self.board_state[i][spot] = 0
+
+        if not scored_moves:
+            return  # No legal moves
+
+        # Sort descending by score
+        scored_moves.sort(key=lambda x: x[0], reverse=True)
+
+        # Safety-check top candidates (max 5) to avoid expensive full scan
+        TOP_N = 5
+        for score, i, spot, j in scored_moves[:TOP_N]:
+            if self.is_move_safe((i, spot, j)):
+                self.execute_move((i, spot, j))
                 return
-        
-        # Priority 4: No safe moves exist, just execute any move
-        if all_possible_moves:
-            self.execute_move(all_possible_moves[0])
+
+        # If none of the top moves are safe, try the rest
+        for score, i, spot, j in scored_moves[TOP_N:]:
+            if self.is_move_safe((i, spot, j)):
+                self.execute_move((i, spot, j))
+                return
+
+        # No safe moves exist — play the highest-scored move anyway
+        _, i, spot, j = scored_moves[0]
+        self.execute_move((i, spot, j))
     
     def get_greedy_move(self):
-        """Get the best greedy move without executing it."""
+        """Get the best greedy move without executing it (used by GREEDY mode only)."""
         highest_score = -1
         best_move = None
         
-        # Use greedy_boards for heuristic mode, otherwise use regular boards_and_scores
-        score_dict = FourInASquareGame.greedy_boards if self.play_mode == "HEURISTIC" else self.boards_and_scores
+        score_dict = self.boards_and_scores
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
 
         for i in range(9):

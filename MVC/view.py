@@ -3,13 +3,18 @@ from PIL import Image, ImageTk
 import os
 
 class MainMenuView:
-    def __init__(self, window, app):
+    def __init__(self, window, app, scale=1.0):
         self.window = window
         self.app = app
+        self.scale = scale
         self.frame = tk.Frame(self.window)
 
-        self.start_game_button = tk.Button(self.frame, text="Start Game", command=self.on_start_game)
-        self.start_game_button.pack(pady=20)
+        self.start_game_button = tk.Button(
+            self.frame, text="Start Game",
+            font=("Arial", int(14 * scale)),
+            command=self.on_start_game
+        )
+        self.start_game_button.pack(pady=int(20 * scale))
         # TODO: Add title, buttons, etc.
         
     def on_start_game(self):
@@ -23,10 +28,11 @@ class MainMenuView:
 
 
 class GameView:
-    def __init__(self, window, app, controller=None):
+    def __init__(self, window, app, controller=None, scale=1.0):
         self.window = window
         self.app = app
         self.controller = controller
+        self.scale = scale
         self.frame = tk.Frame(self.window)
 
         # Model state indexes - track current selections
@@ -41,15 +47,16 @@ class GameView:
         self.grid2_sub_frames = {}  # {sub_board_idx: frame}
         
         self.return_menu_button = tk.Button(self.frame, text="Return to Menu", command=self.on_return_menu)
-        self.return_menu_button.pack(pady=20)
+        self.return_menu_button.pack(pady=int(20 * scale))
 
         # Status label to show current state
-        self.status_label = tk.Label(self.frame, text="Place your piece", font=("Arial", 14))
-        self.status_label.pack(pady=10)
+        self.status_label = tk.Label(self.frame, text="Place your piece", font=("Arial", int(14 * scale)))
+        self.status_label.pack(pady=int(10 * scale))
 
         # Container frame for both grids at the same position
-        self.grid_container = tk.Frame(self.frame, width=650, height=650)
-        self.grid_container.pack(pady=10)
+        _grid_size = int(650 * scale)
+        self.grid_container = tk.Frame(self.frame, width=_grid_size, height=_grid_size)
+        self.grid_container.pack(pady=int(10 * scale))
         self.grid_container.pack_propagate(False)  # Don't shrink to fit content
         
         # Both grids placed in the same container
@@ -77,11 +84,12 @@ class GameView:
                         row = sb_row * 2 + spot_row
                         col = sb_col * 2 + spot_col
                         
+                        _btn_size = int(100 * scale)
                         if sub_board_idx == 4:
-                            btn = tk.Button(sub_frame, image=self.pixel, width=100, height=100,
+                            btn = tk.Button(sub_frame, image=self.pixel, width=_btn_size, height=_btn_size,
                                           relief=tk.SUNKEN, bg="#000000", state=tk.DISABLED)
                         else:
-                            btn = tk.Button(sub_frame, image=self.pixel, width=100, height=100,
+                            btn = tk.Button(sub_frame, image=self.pixel, width=_btn_size, height=_btn_size,
                                           relief=tk.RAISED, bg="#3a3a3a",
                                           command=lambda sb=sub_board_idx, sp=spot_idx: self.on_piece_click(sb, sp))
                         btn.grid(row=spot_row, column=spot_col)
@@ -101,11 +109,12 @@ class GameView:
                         row = sb_row * 2 + spot_row
                         col = sb_col * 2 + spot_col
                         
+                        _btn_size = int(100 * scale)
                         if sub_board_idx == 4:
-                            btn = tk.Button(sub_frame, image=self.pixel, width=100, height=100,
+                            btn = tk.Button(sub_frame, image=self.pixel, width=_btn_size, height=_btn_size,
                                           relief=tk.SUNKEN, bg="#000000", state=tk.DISABLED)
                         else:
-                            btn = tk.Button(sub_frame, image=self.pixel, width=100, height=100,
+                            btn = tk.Button(sub_frame, image=self.pixel, width=_btn_size, height=_btn_size,
                                           relief=tk.RAISED, bg="#3a3a3a",
                                           command=lambda sb=sub_board_idx: self.on_sub_board_click(sb))
                         btn.grid(row=spot_row, column=spot_col)
@@ -291,13 +300,13 @@ class GameView:
         # Create a popup window
         result_window = tk.Toplevel(self.window)
         result_window.title("Game Over")
-        result_window.geometry("300x150")
+        result_window.geometry(f"{int(300 * self.scale)}x{int(150 * self.scale)}")
         
-        label = tk.Label(result_window, text=result, font=("Arial", 20, "bold"))
-        label.pack(pady=30)
+        label = tk.Label(result_window, text=result, font=("Arial", int(20 * self.scale), "bold"))
+        label.pack(pady=int(30 * self.scale))
         
-        ok_button = tk.Button(result_window, text="OK", command=result_window.destroy)
-        ok_button.pack(pady=10)
+        ok_button = tk.Button(result_window, text="OK", font=("Arial", int(11 * self.scale)), command=result_window.destroy)
+        ok_button.pack(pady=int(10 * self.scale))
 
     def show_grid1(self):
         """Show the piece placement grid"""
@@ -326,7 +335,16 @@ class App:
     def __init__(self):
         self.window = tk.Tk()
         self.window.title("Four In A Square")
-        self.window.geometry("800x900")  # Adjusted for single grid display
+
+        # Compute scale from screen resolution (baseline: 800px wide window)
+        screen_w = self.window.winfo_screenwidth()
+        screen_h = self.window.winfo_screenheight()
+        target = min(screen_w, screen_h) * 0.8
+        self.scale = max(0.5, min(2.0, target / 800))
+
+        win_w = int(800 * self.scale)
+        win_h = int(900 * self.scale)
+        self.window.geometry(f"{win_w}x{win_h}")
 
         logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources\\logo.png")
         logo_img = Image.open(logo_path)
@@ -341,8 +359,8 @@ class App:
         
         self.window.iconphoto(True, self.logo_256, self.logo_128, self.logo_64, self.logo_48, self.logo_32, self.logo_16)
         
-        self.menu = MainMenuView(self.window, self)
-        self.game = GameView(self.window, self, controller=None)  # Controller set later
+        self.menu = MainMenuView(self.window, self, scale=self.scale)
+        self.game = GameView(self.window, self, controller=None, scale=self.scale)  # Controller set later
         self.controller = None  # Controller reference
         
         self.menu.show()  # Start with menu visible

@@ -14,12 +14,14 @@ class GameController:
         # Track game phase
         self.waiting_for_piece = True  # True if waiting for piece placement, False if waiting for sub-board move
         self.piece_placement = None  # Store (sub_board_idx, spot_idx) when piece is placed
+        self.game_over = False  # True once the game has ended
         
     def start_new_game(self):
         """Start a new game"""
         self.model.reset_game()
         self.waiting_for_piece = True
         self.piece_placement = None
+        self.game_over = False
         
         # Show initial board state with only center black
         self.update_view()
@@ -40,6 +42,8 @@ class GameController:
         
     def handle_piece_click(self, sub_board_idx, spot_idx):
         """Handle when player clicks on a spot to place a piece"""
+        if self.game_over:
+            return
         if not self.waiting_for_piece:
             self.view.game.update_status("Please select a sub-board to move first!")
             return  # Not the right phase
@@ -61,6 +65,8 @@ class GameController:
     
     def handle_sub_board_click(self, source_idx):
         """Handle when player selects sub-board to move"""
+        if self.game_over:
+            return
         if self.waiting_for_piece or self.piece_placement is None:
             self.view.game.update_status("Please place a piece first!")
             return  # Not the right phase
@@ -134,6 +140,7 @@ class GameController:
     
     def handle_game_end(self, result):
         """Handle game end (show result to player)"""
+        self.game_over = True
         print(f"Game over: {result}")
         
         # Save the game boards to the new_boards dictionary

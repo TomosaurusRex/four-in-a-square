@@ -1,5 +1,6 @@
 import random
 import json
+import pickle
 import os
 
 
@@ -7,7 +8,8 @@ class GameModel:
     """Model for Four In A Square game - handles game state and logic"""
     
     # Class-level dictionaries for scoring and saving
-    new_boards = {}  # Only new boards from this session
+    new_boards = {}       # Only new boards from this session
+    learning_boards = {}  # Loaded from pkl file for greedy lookup
     
     # Pre-computed neighbor lookup for the 3x3 sub-board grid
     NEIGHBORS = {
@@ -37,12 +39,19 @@ class GameModel:
                     return True
         return False
     
-    def __init__(self):
+    def __init__(self, load_file="board_dicts/heuristic_boards_and_scores.pkl"):
         """Initialize game model for player vs heuristic AI."""
         self.game_boards = {}  # Track boards played in current game
+        self.load_file = load_file
+        self.save_file = load_file
 
         # Ensure board_dicts directory exists
         os.makedirs("board_dicts", exist_ok=True)
+
+        # Load learning data once (class-level, shared across instances)
+        if not GameModel.learning_boards and os.path.exists(self.load_file):
+            with open(self.load_file, "rb") as f:
+                GameModel.learning_boards = pickle.load(f)
 
         # Game state
         self.board_state = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], 
@@ -192,17 +201,11 @@ class GameModel:
     
     @staticmethod
     def save_all_to_file(filename):
-        """Save all new boards from this session to file, merging with existing data."""
-        # Ensure board_dicts directory exists
+        """Save all new boards from this session to pkl file, merging with existing data."""
         os.makedirs("board_dicts", exist_ok=True)
-        
-        # Load existing save file
-        save_data = {}
-        if os.path.exists(filename):
-            with open(filename, "r") as f:
-                save_data = json.load(f)
-        
-        # Merge new boards with existing save data
+
+        # Merge new_boards into the already-loaded in-memory dict
+        save_data = GameModel.learning_boards
         for key, value in GameModel.new_boards.items():
             if key in save_data:
                 num, avg = save_data[key]
@@ -211,10 +214,10 @@ class GameModel:
                 save_data[key] = (num + new_num, merged_avg)
             else:
                 save_data[key] = value
-        
-        with open(filename, "w") as f:
-            json.dump(save_data, f)
-        
+
+        with open(filename, "wb") as f:
+            pickle.dump(save_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
         print(f"Saved {len(GameModel.new_boards)} new boards to {filename}")
 
     @staticmethod
@@ -228,6 +231,70 @@ class GameModel:
                     board_state_string += "1" if cell == 1 else "2" if cell == 2 else "0"
         return board_state_string
     
+    def get_greedy_move(self):
+        """Look up the best move using pre-computed scores from the pkl file.
+        Returns (sub_board_idx, spot_idx, source_idx) or None if no known board found."""
+        highest_score = -1
+        best_move = None
+        score_dict = GameModel.learning_boards
+        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+
+        for i in range(9):
+            if not self.board_state[i]:
+                continue
+            for spot in self.empty_spots[i]:
+                self.board_state[i][spot] = 1
+
+                for j in range(9):
+                    if self.possible_sub_board_spots[j] != 1:
+                        continue
+
+                    saved_empty = self.board_state[empty_sub_board_spot]
+                    self.board_state[empty_sub_board_spot] = list(self.board_state[j])
+                    saved_j = self.board_state[j]
+                    self.board_state[j] = []
+
+                    key = GameModel.board_to_string(self.board_state)
+                    if key in score_dict:
+                        score = score_dict[key][1]
+                        if score > highest_score:
+                            highest_score = score
+                            best_move = (i, spot, j)
+                            if score >= 1.0:  # Perfect score — stop early
+                                self.board_state[j] = saved_j
+                                self.board_state[empty_sub_board_spot] = saved_empty
+                                self.board_state[i][spot] = 0
+                                return best_move
+
+                    self.board_state[j] = saved_j
+                    self.board_state[empty_sub_board_spot] = saved_empty
+
+                self.board_state[i][spot] = 0
+
+        return best_move
+
+    def perform_greedy_agent_move(self, exploration_rate=0.1):
+        """Make a move using pre-computed pkl scores (greedy lookup).
+        Falls back to random if no known board is found or on exploration."""
+        if random.random() < exploration_rate or not GameModel.learning_boards:
+            self._make_random_move(player_value=1)
+            return
+
+        best_move = self.get_greedy_move()
+        if best_move is None:
+            self._make_random_move(player_value=1)
+        else:
+            self.execute_move(*best_move, player_value=1)
+
+    def _make_random_move(self, player_value):
+        """Make a fully random legal move for the given player."""
+        non_empty = [i for i, sub in enumerate(self.empty_spots) if sub]
+        i = random.choice(non_empty)
+        spot = random.choice(self.empty_spots[i])
+        available = [j for j, val in enumerate(self.possible_sub_board_spots) if val == 1]
+        j = random.choice(available)
+        self.execute_move(i, spot, j, player_value=player_value)
+
     def find_winning_move(self):
         """Find a move that wins the game for player 1 (AI).
         Uses mutate/unmake for zero-copy performance."""

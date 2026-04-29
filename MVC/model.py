@@ -2,6 +2,38 @@ import random
 import json
 import pickle
 import os
+import torch
+import torch.nn as nn
+
+
+def _encode_board_string(board_str):
+    """Encode a 36-char board string into a 108-float one-hot vector.
+    '0'->[ 1,0,0 ], '1'->[0,1,0], '2'->[0,0,1], ' '->[0,0,0]
+    """
+    vec = []
+    for char in board_str:
+        if char == ' ':
+            vec.extend([0.0, 0.0, 0.0])
+        else:
+            v = int(char)
+            one_hot = [0.0, 0.0, 0.0]
+            one_hot[v] = 1.0
+            vec.extend(one_hot)
+    return vec
+
+
+class FourInASquareNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layer1 = nn.Linear(108, 128)
+        self.layer2 = nn.Linear(128, 64)
+        self.output = nn.Linear(64, 1)
+
+    def forward(self, x):
+        x = torch.relu(self.layer1(x))
+        x = torch.relu(self.layer2(x))
+        x = torch.sigmoid(self.output(x))
+        return x
 
 
 class GameModel:
@@ -52,6 +84,14 @@ class GameModel:
         if not GameModel.learning_boards and os.path.exists(self.load_file):
             with open(self.load_file, "rb") as f:
                 GameModel.learning_boards = pickle.load(f)
+
+        # Load trained NN model if available
+        nn_path = "board_dicts/four_in_a_square_model.pth"
+        self.nn_model = None
+        if os.path.exists(nn_path):
+            self.nn_model = FourInASquareNet()
+            self.nn_model.load_state_dict(torch.load(nn_path, map_location="cpu", weights_only=True))
+            self.nn_model.eval()
 
         # Game state
         self.board_state = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], 
@@ -265,6 +305,48 @@ class GameModel:
                                 self.board_state[empty_sub_board_spot] = saved_empty
                                 self.board_state[i][spot] = 0
                                 return best_move
+
+                    self.board_state[j] = saved_j
+                    self.board_state[empty_sub_board_spot] = saved_empty
+
+                self.board_state[i][spot] = 0
+
+        return best_move
+
+    def get_nn_move(self):
+        """Score every legal move with the trained NN and return the best one.
+        Returns (sub_board_idx, spot_idx, source_idx) or None if no model loaded."""
+        if self.nn_model is None:
+            return None
+
+        best_score = -1.0
+        best_move = None
+        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+
+        for i in range(9):
+            if not self.board_state[i]:
+                continue
+            for spot in self.empty_spots[i]:
+                self.board_state[i][spot] = 1
+
+                for j in range(9):
+                    if self.possible_sub_board_spots[j] != 1:
+                        continue
+
+                    saved_empty = self.board_state[empty_sub_board_spot]
+                    self.board_state[empty_sub_board_spot] = list(self.board_state[j])
+                    saved_j = self.board_state[j]
+                    self.board_state[j] = []
+
+                    vec = _encode_board_string(GameModel.board_to_string(self.board_state))
+                    with torch.no_grad():
+                        score = self.nn_model(
+                            torch.tensor([vec], dtype=torch.float32)
+                        ).item()
+
+                    if score > best_score:
+                        best_score = score
+                        best_move = (i, spot, j)
 
                     self.board_state[j] = saved_j
                     self.board_state[empty_sub_board_spot] = saved_empty

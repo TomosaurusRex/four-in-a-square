@@ -14,7 +14,8 @@ class Tournament:
         print("2. Greedy on random json (boards_and_scores.json)", flush=True)
         print("3. Greedy on greedy json (greedy_boards_and_scores.json)", flush=True)
         print("4. Heuristic (uses greedy json for greedy moves, saves to heuristic json)", flush=True)
-        print("Enter choice (1, 2, 3, or 4): ", end='', flush=True)
+        print("5. Heuristic vs Heuristic (saves to heuristic json)", flush=True)
+        print("Enter choice (1, 2, 3, 4, or 5): ", end='', flush=True)
         choice = input().strip()
         
         self.stats_dict = {"Red wins": 0, "White wins": 0, "Draw": 0}
@@ -37,6 +38,11 @@ class Tournament:
             self.greedy_file = "board_dicts/greedy_boards_and_scores.pkl"
         elif choice == "4":
             self.play_mode = "HEURISTIC"
+            self.load_file = "board_dicts/heuristic_boards_and_scores.pkl"
+            self.save_file = "board_dicts/heuristic_boards_and_scores.pkl"
+            self.greedy_file = "board_dicts/greedy_boards_and_scores.pkl"
+        elif choice == "5":
+            self.play_mode = "HEURISTIC_VS_HEURISTIC"
             self.load_file = "board_dicts/heuristic_boards_and_scores.pkl"
             self.save_file = "board_dicts/heuristic_boards_and_scores.pkl"
             self.greedy_file = "board_dicts/greedy_boards_and_scores.pkl"

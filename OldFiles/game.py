@@ -167,12 +167,17 @@ class FourInASquareGame:
             if player_turn:
                 if self.play_mode == "RANDOM":
                     self.perform_random_agent_move()
+                elif self.play_mode == "HEURISTIC_VS_HEURISTIC":
+                    self.perform_heuristic_agent_move(exploration_rate=self.exploration_rate)
                 elif self.play_mode == "HEURISTIC":
                     self.perform_heuristic_agent_move()
                 else:
                     self.perform_greedy_agent_move()
             else:
-                self.perform_random_rival_move()
+                if self.play_mode == "HEURISTIC_VS_HEURISTIC":
+                    self.perform_heuristic_rival_move()
+                else:
+                    self.perform_random_rival_move()
 
             self.game_boards[FourInASquareGame.board_to_string(self.board_state)] = 0
 
@@ -254,8 +259,8 @@ class FourInASquareGame:
     def perform_random_agent_move(self):
         self.make_random_move(1)
 
-    def find_winning_move(self):
-        """Find a move that wins the game for player 1."""
+    def find_winning_move(self, player=1):
+        """Find a move that wins the game for the given player."""
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
 
         for i in range(9):
@@ -264,7 +269,7 @@ class FourInASquareGame:
                 
             for spot in self.empty_spots[i]:
                 # Mutate piece placement
-                self.board_state[i][spot] = 1
+                self.board_state[i][spot] = player
                 
                 for j in range(9):
                     if self.possible_sub_board_spots[j] == 1:
@@ -274,7 +279,7 @@ class FourInASquareGame:
                         saved_j = self.board_state[j]
                         self.board_state[j] = []
                         
-                        if FourInASquareGame._check_player_wins(self.board_state, 1):
+                        if FourInASquareGame._check_player_wins(self.board_state, player):
                             # Unmake before returning
                             self.board_state[j] = saved_j
                             self.board_state[empty_sub_board_spot] = saved_empty
@@ -290,18 +295,19 @@ class FourInASquareGame:
 
         return None
     
-    def is_move_safe(self, move):
+    def is_move_safe(self, move, player=1):
         """Check if a move gives the opponent an immediate winning opportunity.
         
         Returns True if the move is safe (doesn't give opponent a win).
         Returns False if the move allows opponent to win on their next turn.
         """
         our_i, our_spot, our_j = move
+        opponent = 3 - player
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
         
         # Simulate our move with lightweight copy
         our_board = FourInASquareGame._copy_board(self.board_state)
-        our_board[our_i][our_spot] = 1
+        our_board[our_i][our_spot] = player
         our_board[empty_sub_board_spot] = list(our_board[our_j])
         our_board[our_j] = []
         
@@ -332,7 +338,7 @@ class FourInASquareGame:
                     
                     # Mutate: place opponent piece
                     saved_cell = our_board[opp_i][opp_spot]
-                    our_board[opp_i][opp_spot] = 2
+                    our_board[opp_i][opp_spot] = opponent
 
                     # Mutate: sub-board swap
                     saved_opp_empty = our_board[opp_empty_spot]
@@ -340,7 +346,7 @@ class FourInASquareGame:
                     our_board[opp_empty_spot] = list(our_board[opp_j])
                     our_board[opp_j] = []
                     
-                    if FourInASquareGame._check_player_wins(our_board, 2):
+                    if FourInASquareGame._check_player_wins(our_board, opponent):
                         return False  # Move is unsafe
                     
                     # Unmake sub-board swap and piece placement
@@ -416,17 +422,21 @@ class FourInASquareGame:
 
         return score, three_threats
 
-    def perform_heuristic_agent_move(self):
+    def perform_heuristic_agent_move(self, player=1, exploration_rate=0.0):
         """Make a move using heuristics:
         1. Instant win → play it
         2. Score all moves via window evaluation
         3. Safety-check top candidates
         4. Play highest-scoring safe move
         """
+        if random.random() < exploration_rate:
+            self.make_random_move(player)
+            return
+
         # Priority 1: Find a winning move (early exit)
-        winning_move = self.find_winning_move()
+        winning_move = self.find_winning_move(player)
         if winning_move:
-            self.execute_move(winning_move)
+            self.execute_move(winning_move, player_value=player)
             return
 
         # Collect all legal moves and score them
@@ -438,7 +448,7 @@ class FourInASquareGame:
                 continue
             for spot in self.empty_spots[i]:
                 # Mutate: place piece
-                self.board_state[i][spot] = 1
+                self.board_state[i][spot] = player
 
                 for j in range(9):
                     if self.possible_sub_board_spots[j] != 1:
@@ -451,7 +461,7 @@ class FourInASquareGame:
                     self.board_state[j] = []
 
                     # Score the resulting position
-                    score, _ = FourInASquareGame._evaluate_position(self.board_state, 1)
+                    score, _ = FourInASquareGame._evaluate_position(self.board_state, player)
 
                     scored_moves.append((score, i, spot, j))
 
@@ -471,19 +481,22 @@ class FourInASquareGame:
         # Safety-check top candidates (max 5) to avoid expensive full scan
         TOP_N = 5
         for score, i, spot, j in scored_moves[:TOP_N]:
-            if self.is_move_safe((i, spot, j)):
-                self.execute_move((i, spot, j))
+            if self.is_move_safe((i, spot, j), player):
+                self.execute_move((i, spot, j), player_value=player)
                 return
 
         # If none of the top moves are safe, try the rest
         for score, i, spot, j in scored_moves[TOP_N:]:
-            if self.is_move_safe((i, spot, j)):
-                self.execute_move((i, spot, j))
+            if self.is_move_safe((i, spot, j), player):
+                self.execute_move((i, spot, j), player_value=player)
                 return
 
         # No safe moves exist — play the highest-scored move anyway
         _, i, spot, j = scored_moves[0]
-        self.execute_move((i, spot, j))
+        self.execute_move((i, spot, j), player_value=player)
+
+    def perform_heuristic_rival_move(self):
+        self.perform_heuristic_agent_move(player=2, exploration_rate=self.exploration_rate)
     
     def get_greedy_move(self):
         """Get the best greedy move without executing it (used by GREEDY mode only)."""

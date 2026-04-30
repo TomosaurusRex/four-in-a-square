@@ -355,6 +355,18 @@ class GameModel:
 
         return best_move
 
+    def perform_nn_agent_move(self):
+        """Make a move using the trained neural network.
+        Falls back to heuristic if the model is not loaded."""
+        if self.nn_model is None:
+            self.perform_heuristic_agent_move()
+            return
+        move = self.get_nn_move()
+        if move:
+            self.execute_move(*move, player_value=1)
+        else:
+            self._make_random_move(player_value=1)
+
     def perform_greedy_agent_move(self, exploration_rate=0.1):
         """Make a move using pre-computed pkl scores (greedy lookup).
         Falls back to random if no known board is found or on exploration."""

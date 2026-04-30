@@ -15,9 +15,21 @@ class GameController:
         self.waiting_for_piece = True  # True if waiting for piece placement, False if waiting for sub-board move
         self.piece_placement = None  # Store (sub_board_idx, spot_idx) when piece is placed
         self.game_over = False  # True once the game has ended
+        self.agent_type = "HEURISTIC"  # Default agent; overridden by menu selection
         
-    def start_new_game(self):
+    def start_new_game(self, agent_type=None):
         """Start a new game"""
+        if agent_type is not None:
+            self.agent_type = agent_type
+
+        # Warn and fall back if NN chosen but model not loaded
+        if self.agent_type == "NN" and self.model.nn_model is None:
+            self.view.game.update_status(
+                "⚠ NN model not found – falling back to Heuristic. "
+                "Train the model first and place the .pth file in board_dicts/."
+            )
+            self.agent_type = "HEURISTIC"
+
         self.model.reset_game()
         self.waiting_for_piece = True
         self.piece_placement = None
@@ -30,11 +42,32 @@ class GameController:
         # AI makes the first move after a brief delay to show initial state
         self.view.window.after(500, self.ai_first_move)
     
+    def _perform_ai_move(self):
+        """Dispatch AI move to the correct agent based on self.agent_type."""
+        if self.agent_type == "RANDOM":
+            self.model._make_random_move(player_value=1)
+        elif self.agent_type == "GREEDY":
+            self.model.perform_greedy_agent_move()
+        elif self.agent_type == "NN":
+            move = self.model.get_nn_move()
+            if move:
+                self.model.execute_move(*move, player_value=1)
+            else:
+                self.model._make_random_move(player_value=1)
+        else:  # Default: HEURISTIC
+            self.model.perform_heuristic_agent_move()
+
     def ai_first_move(self):
         """Execute AI's first move"""
-        self.view.game.update_status("AI is making the first move...")
+        agent_label = {
+            "RANDOM":    "Random AI",
+            "GREEDY":    "Greedy AI",
+            "HEURISTIC": "Heuristic AI",
+            "NN":        "Neural Net AI",
+        }.get(self.agent_type, "AI")
+        self.view.game.update_status(f"{agent_label} is making the first move...")
         self.view.window.update()  # Force UI update
-        self.model.perform_heuristic_agent_move()
+        self._perform_ai_move()
         
         # Update view after AI move
         self.update_view()
@@ -105,10 +138,16 @@ class GameController:
             return
         
         # AI's turn
-        self.view.game.update_status("AI is thinking...")
+        agent_label = {
+            "RANDOM":    "Random AI",
+            "GREEDY":    "Greedy AI",
+            "HEURISTIC": "Heuristic AI",
+            "NN":        "Neural Net AI",
+        }.get(self.agent_type, "AI")
+        self.view.game.update_status(f"{agent_label} is thinking...")
         self.view.window.update()  # Force UI update
-        print("AI is thinking...")
-        self.model.perform_heuristic_agent_move()
+        print(f"{agent_label} is thinking...")
+        self._perform_ai_move()
         
         # Update view after AI move and switch back to grid1
         self.update_view()

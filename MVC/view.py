@@ -3,22 +3,90 @@ from PIL import Image, ImageTk
 import os
 
 class MainMenuView:
+    # Agent options: (display label, agent_type string)
+    AGENTS = [
+        ("Random",    "RANDOM"),
+        ("Greedy",    "GREEDY"),
+        ("Heuristic", "HEURISTIC"),
+        ("Neural Net","NN"),
+    ]
+
     def __init__(self, window, app, scale=1.0):
         self.window = window
         self.app = app
         self.scale = scale
         self.frame = tk.Frame(self.window)
 
+        # ── Title ──────────────────────────────────────────────────────────
+        title_label = tk.Label(
+            self.frame, text="Four In A Square",
+            font=("Arial", int(24 * scale), "bold")
+        )
+        title_label.pack(pady=int(30 * scale))
+
+        # ── Agent selector ─────────────────────────────────────────────────
+        agent_label = tk.Label(
+            self.frame, text="Select AI opponent:",
+            font=("Arial", int(13 * scale))
+        )
+        agent_label.pack(pady=(int(10 * scale), 0))
+
+        # StringVar that holds the currently selected agent_type string
+        self.selected_agent = tk.StringVar(value="HEURISTIC")
+
+        btn_frame = tk.Frame(self.frame)
+        btn_frame.pack(pady=int(10 * scale))
+
+        self._agent_buttons = {}
+        for label, agent_type in self.AGENTS:
+            btn = tk.Button(
+                btn_frame,
+                text=label,
+                font=("Arial", int(12 * scale)),
+                width=int(10 * scale),
+                relief=tk.RAISED,
+                command=lambda at=agent_type: self._select_agent(at)
+            )
+            btn.pack(side=tk.LEFT, padx=int(6 * scale))
+            self._agent_buttons[agent_type] = btn
+
+        # ── NN warning label (hidden unless NN chosen) ─────────────────────
+        self._nn_warning = tk.Label(
+            self.frame,
+            text="⚠ Neural Net requires board_dicts/four_in_a_square_model.pth",
+            font=("Arial", int(10 * scale)),
+            fg="#CC6600"
+        )
+        # Packed conditionally in _select_agent
+
+        # Highlight the default selection
+        self._select_agent("HEURISTIC")
+
+        # ── Start button ───────────────────────────────────────────────────
         self.start_game_button = tk.Button(
             self.frame, text="Start Game",
             font=("Arial", int(14 * scale)),
             command=self.on_start_game
         )
         self.start_game_button.pack(pady=int(20 * scale))
-        # TODO: Add title, buttons, etc.
-        
+
+    def _select_agent(self, agent_type):
+        """Visually highlight the chosen agent button and record the selection."""
+        self.selected_agent.set(agent_type)
+        for at, btn in self._agent_buttons.items():
+            if at == agent_type:
+                btn.config(relief=tk.SUNKEN, bg="#4a90d9", fg="white")
+            else:
+                btn.config(relief=tk.RAISED, bg=self.frame.cget("bg"), fg="black")
+
+        # Show / hide NN warning
+        if agent_type == "NN":
+            self._nn_warning.pack(pady=(0, int(5 * self.scale)))
+        else:
+            self._nn_warning.pack_forget()
+
     def on_start_game(self):
-        self.app.show_game()
+        self.app.show_game(agent_type=self.selected_agent.get())
 
     def show(self):
         self.frame.pack()
@@ -314,7 +382,14 @@ class GameView:
         if self.controller and self.controller.model.current_player == 2:
             self.status_label.config(text="Your turn - Place your piece (White)")
         else:
-            self.status_label.config(text="AI's turn (Red)")
+            agent = getattr(self.controller, 'agent_type', 'AI') if self.controller else 'AI'
+            label = {
+                "RANDOM":    "Random AI",
+                "GREEDY":    "Greedy AI",
+                "HEURISTIC": "Heuristic AI",
+                "NN":        "Neural Net AI",
+            }.get(agent, "AI")
+            self.status_label.config(text=f"{label}'s turn (Red)")
     
     def show_grid2(self):
         """Show the sub-board selection grid"""
@@ -370,13 +445,13 @@ class App:
         self.controller = controller
         self.game.set_controller(controller)
         
-    def show_game(self):
+    def show_game(self, agent_type="HEURISTIC"):
         self.menu.hide()
         self.game.show()
         
         # Start a new game when showing the game view
         if self.controller:
-            self.controller.start_new_game()
+            self.controller.start_new_game(agent_type=agent_type)
         
     def show_menu(self):
         self.game.hide()

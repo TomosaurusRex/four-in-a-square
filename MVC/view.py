@@ -379,10 +379,12 @@ class GameView:
     def show_grid1(self):
         """Show the piece placement grid"""
         self.grid1_frame.tkraise()
-        if self.controller and self.controller.model.current_player == 2:
-            self.status_label.config(text="Your turn - Place your piece (White)")
+        if self.controller is None or self.controller.game_over:
+            return
+        if self.controller.waiting_for_piece:
+            self.status_label.config(text="Your turn — Place your piece (White)")
         else:
-            agent = getattr(self.controller, 'agent_type', 'AI') if self.controller else 'AI'
+            agent = getattr(self.controller, 'agent_type', 'AI')
             label = {
                 "RANDOM":    "Random AI",
                 "GREEDY":    "Greedy AI",

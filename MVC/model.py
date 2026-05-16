@@ -1,5 +1,4 @@
 import random
-import json
 import pickle
 import os
 import torch
@@ -7,16 +6,20 @@ import torch.nn as nn
 
 
 def _encode_board_string(board_str):
-    """Encode a 36-char board string into a 108-float one-hot vector.
-    '0'->[ 1,0,0 ], '1'->[0,1,0], '2'->[0,0,1], ' '->[0,0,0]
+    """Encode a 36-char board string into a 144-float one-hot vector.
+    Each character maps to a 4-element one-hot:
+      '0' -> [1,0,0,0]  (empty cell)
+      '1' -> [0,1,0,0]  (Red / AI piece)
+      '2' -> [0,0,1,0]  (White / player piece)
+      ' ' -> [0,0,0,1]  (missing sub-board slot)
     """
     vec = []
     for char in board_str:
         if char == ' ':
-            vec.extend([0.0, 0.0, 0.0])
+            vec.extend([0.0, 0.0, 0.0, 1.0])
         else:
             v = int(char)
-            one_hot = [0.0, 0.0, 0.0]
+            one_hot = [0.0, 0.0, 0.0, 0.0]
             one_hot[v] = 1.0
             vec.extend(one_hot)
     return vec
@@ -25,13 +28,20 @@ def _encode_board_string(board_str):
 class FourInASquareNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.layer1 = nn.Linear(108, 128)
-        self.layer2 = nn.Linear(128, 64)
+        self.layer1 = nn.Linear(144, 256)
+        self.dropout1 = nn.Dropout(0.2)
+        self.layer2 = nn.Linear(256, 128)
+        self.dropout2 = nn.Dropout(0.2)
+        self.layer3 = nn.Linear(128, 64)
         self.output = nn.Linear(64, 1)
+        self.activation = nn.LeakyReLU(0.01)
 
     def forward(self, x):
-        x = torch.relu(self.layer1(x))
-        x = torch.relu(self.layer2(x))
+        x = self.activation(self.layer1(x))
+        x = self.dropout1(x)
+        x = self.activation(self.layer2(x))
+        x = self.dropout2(x)
+        x = self.activation(self.layer3(x))
         x = torch.sigmoid(self.output(x))
         return x
 
@@ -215,9 +225,10 @@ class GameModel:
         num_boards = len(self.game_boards)
         boards = list(self.game_boards.keys())
 
-        if self.check_win() == "White wins":
+        result = self.check_win()
+        if result == "White wins":
             outcome = 0  # Bad for AI (Red)
-        elif self.check_win() == "Red wins":
+        elif result == "Red wins":
             outcome = 1  # Good for AI (Red)
         else:
             outcome = 0.5  # Draw
@@ -319,14 +330,19 @@ class GameModel:
         if self.nn_model is None:
             return None
 
-        best_score = -1.0
+        best_score = float('-inf')
         best_move = None
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
 
+        self.nn_model.eval()
         for i in range(9):
             if not self.board_state[i]:
                 continue
-            for spot in self.empty_spots[i]:
+            # Skip the empty slot: the j-loop will overwrite board_state[i]
+            # mid-iteration when i == empty_sub_board_spot, corrupting the search.
+            if i == empty_sub_board_spot:
+                continue
+            for spot in list(self.empty_spots[i]):
                 self.board_state[i][spot] = 1
 
                 for j in range(9):
@@ -428,64 +444,78 @@ class GameModel:
     
     def is_move_safe(self, move):
         """Check if a move gives the opponent an immediate winning opportunity.
-        
-        Uses lightweight copy + mutate/unmake for opponent simulation.
+
+        Uses full mutate/unmake on self.board_state and self.empty_spots —
+        no board copies allocated.
+
         Returns True if the move is safe (doesn't give opponent a win).
         Returns False if the move allows opponent to win on their next turn.
         """
         our_i, our_spot, our_j = move
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
-        
-        # Simulate our move with lightweight copy
-        our_board = [list(sub) if sub else [] for sub in self.board_state]
-        our_board[our_i][our_spot] = 1
-        our_board[empty_sub_board_spot] = list(our_board[our_j])
-        our_board[our_j] = []
-        
-        # Calculate new empty spots after our move
-        new_empty_spots = [list(spots) for spots in self.empty_spots]
-        new_empty_spots[our_i] = [s for s in new_empty_spots[our_i] if s != our_spot]
-        new_empty_spots[empty_sub_board_spot] = list(new_empty_spots[our_j])
-        new_empty_spots[our_j] = []
-        
-        # Calculate new possible sub board spots using NEIGHBORS
-        new_possible_spots = [0] * 9
-        new_possible_spots[our_j] = 2
+
+        # --- Mutate: simulate our move ---
+        self.board_state[our_i][our_spot] = 1
+        saved_dest_board = self.board_state[empty_sub_board_spot]   # always []
+        self.board_state[empty_sub_board_spot] = list(self.board_state[our_j])
+        saved_our_j_board = self.board_state[our_j]
+        self.board_state[our_j] = []
+
+        saved_empty_i = self.empty_spots[our_i]
+        self.empty_spots[our_i] = [s for s in saved_empty_i if s != our_spot]
+        saved_empty_dest = self.empty_spots[empty_sub_board_spot]
+        self.empty_spots[empty_sub_board_spot] = list(self.empty_spots[our_j])
+        saved_empty_our_j = self.empty_spots[our_j]
+        self.empty_spots[our_j] = []
+
+        # Post-move opponent possibilities (our_j is now the empty slot)
+        new_possible = [0] * 9
+        new_possible[our_j] = 2
         for n in GameModel.NEIGHBORS[our_j]:
-            new_possible_spots[n] = 1
-        new_possible_spots[empty_sub_board_spot] = 0
-        
-        opp_empty_spot = new_possible_spots.index(2)
+            new_possible[n] = 1
+        new_possible[empty_sub_board_spot] = 0
+        opp_new_empty = our_j  # == new_possible.index(2)
 
-        # Check if opponent can win from this state using mutate/unmake
+        # --- Check every opponent reply ---
+        result = True
         for opp_i in range(9):
-            if not our_board[opp_i]:
+            if not self.board_state[opp_i]:
                 continue
-            
-            for opp_spot in new_empty_spots[opp_i]:
+            for opp_spot in self.empty_spots[opp_i]:
                 for opp_j in range(9):
-                    if new_possible_spots[opp_j] != 1:
+                    if new_possible[opp_j] != 1:
                         continue
-                    
-                    # Mutate: place opponent piece
-                    saved_cell = our_board[opp_i][opp_spot]
-                    our_board[opp_i][opp_spot] = 2
+                    # Mutate: opponent move
+                    self.board_state[opp_i][opp_spot] = 2
+                    saved_opp_dest = self.board_state[opp_new_empty]
+                    self.board_state[opp_new_empty] = list(self.board_state[opp_j])
+                    saved_opp_j = self.board_state[opp_j]
+                    self.board_state[opp_j] = []
 
-                    # Mutate: sub-board swap
-                    saved_opp_empty = our_board[opp_empty_spot]
-                    saved_opp_j = our_board[opp_j]
-                    our_board[opp_empty_spot] = list(our_board[opp_j])
-                    our_board[opp_j] = []
-                    
-                    if GameModel._check_player_wins(our_board, 2):
-                        return False  # Move is unsafe
-                    
-                    # Unmake sub-board swap and piece placement
-                    our_board[opp_j] = saved_opp_j
-                    our_board[opp_empty_spot] = saved_opp_empty
-                    our_board[opp_i][opp_spot] = saved_cell
-        
-        return True  # Move is safe
+                    if GameModel._check_player_wins(self.board_state, 2):
+                        result = False
+
+                    # Unmake: opponent move
+                    self.board_state[opp_j] = saved_opp_j
+                    self.board_state[opp_new_empty] = saved_opp_dest
+                    self.board_state[opp_i][opp_spot] = 0  # was empty before
+
+                    if not result:
+                        break
+                if not result:
+                    break
+            if not result:
+                break
+
+        # --- Unmake: our move ---
+        self.empty_spots[our_j] = saved_empty_our_j
+        self.empty_spots[empty_sub_board_spot] = saved_empty_dest
+        self.empty_spots[our_i] = saved_empty_i
+        self.board_state[our_j] = saved_our_j_board
+        self.board_state[empty_sub_board_spot] = saved_dest_board
+        self.board_state[our_i][our_spot] = 0
+
+        return result
 
     @staticmethod
     def _evaluate_position(board_state, player):
@@ -500,6 +530,7 @@ class GameModel:
         opponent = 3 - player
         score = 0
         three_threats = 0
+        opp_three_threats = 0
 
         for r in range(5):
             for c in range(5):
@@ -530,12 +561,16 @@ class GameModel:
                 # Opponent formations
                 elif theirs == 3 and empty == 1:
                     score -= 500
+                    opp_three_threats += 1
                 elif theirs == 2 and empty == 2:
                     score -= 25
 
         # Fork bonus: 2+ three-threats is nearly unstoppable
         if three_threats >= 2:
             score += 600
+        # Opponent fork penalty: leaving them with 2+ three-threats is nearly losing
+        if opp_three_threats >= 2:
+            score -= 800
 
         return score, three_threats
 

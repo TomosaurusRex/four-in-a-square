@@ -1,3 +1,4 @@
+import copy
 from model import GameModel
 from view import MainMenuView, GameView, App
 
@@ -168,7 +169,6 @@ class GameController:
     
     def update_view_with_pending_piece(self):
         """Update the view showing the pending piece placement before it's committed to the model"""
-        import copy
         preview_board = copy.deepcopy(self.model.board_state)
         if self.piece_placement:
             sb, sp = self.piece_placement

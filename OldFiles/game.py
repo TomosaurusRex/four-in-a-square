@@ -1,6 +1,50 @@
 import random
 import pickle
 import os
+import torch
+import torch.nn as nn
+
+
+
+def _encode_board_string(board_str):
+    """Encode a 36-char board string into a 144-float one-hot vector.
+    Each character maps to a 4-element one-hot:
+      '0' -> [1,0,0,0]  (empty cell)
+      '1' -> [0,1,0,0]  (Red / AI piece)
+      '2' -> [0,0,1,0]  (White / player piece)
+      ' ' -> [0,0,0,1]  (missing sub-board slot)
+    """
+    vec = []
+    for char in board_str:
+        if char == ' ':
+            vec.extend([0.0, 0.0, 0.0, 1.0])
+        else:
+            v = int(char)
+            one_hot = [0.0, 0.0, 0.0, 0.0]
+            one_hot[v] = 1.0
+            vec.extend(one_hot)
+    return vec
+
+
+class FourInASquareNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layer1 = nn.Linear(144, 256)
+        self.dropout1 = nn.Dropout(0.2)
+        self.layer2 = nn.Linear(256, 128)
+        self.dropout2 = nn.Dropout(0.2)
+        self.layer3 = nn.Linear(128, 64)
+        self.output = nn.Linear(64, 1)
+        self.activation = nn.LeakyReLU(0.01)
+
+    def forward(self, x):
+        x = self.activation(self.layer1(x))
+        x = self.dropout1(x)
+        x = self.activation(self.layer2(x))
+        x = self.dropout2(x)
+        x = self.activation(self.layer3(x))
+        x = torch.sigmoid(self.output(x))
+        return x
 
 
 class FourInASquareGame:
@@ -12,6 +56,10 @@ class FourInASquareGame:
     # Statistics for greedy agent performance
     total_greedy_moves = 0
     random_fallback_moves = 0
+
+    # Shared NN model (loaded once, reused across all instances)
+    _nn_model = None
+    _nn_model_loaded = False
     
     # Pre-computed neighbor lookup for the 3x3 sub-board grid
     NEIGHBORS = {
@@ -60,15 +108,22 @@ class FourInASquareGame:
         # Ensure board_dicts directory exists
         os.makedirs("board_dicts", exist_ok=True)
 
-        # Load learning data once
-        if not FourInASquareGame.learning_boards and os.path.exists(self.load_file):
+        # Load NN model once (shared across all game instances)
+        if not FourInASquareGame._nn_model_loaded:
+            FourInASquareGame._nn_model_loaded = True
+            nn_path = "board_dicts/four_in_a_square_model.pth"
+            if os.path.exists(nn_path):
+                model = FourInASquareNet()
+                model.load_state_dict(torch.load(nn_path, map_location="cpu", weights_only=True))
+                model.eval()
+                FourInASquareGame._nn_model = model
+            else:
+                print(f"Warning: NN model not found at {nn_path}. NN agent will fall back to random.")
+
+        # Only GREEDY mode queries learning_boards; other modes do pure position evaluation
+        if play_mode == "GREEDY" and not FourInASquareGame.learning_boards and os.path.exists(self.load_file):
             with open(self.load_file, "rb") as f:
                 FourInASquareGame.learning_boards = pickle.load(f)
-        
-        # Load greedy data for heuristic agent
-        if not FourInASquareGame.greedy_boards and os.path.exists(self.greedy_file):
-            with open(self.greedy_file, "rb") as f:
-                FourInASquareGame.greedy_boards = pickle.load(f)
         
         self.boards_and_scores = FourInASquareGame.learning_boards
         
@@ -171,15 +226,19 @@ class FourInASquareGame:
                     self.perform_heuristic_agent_move(exploration_rate=self.exploration_rate)
                 elif self.play_mode == "HEURISTIC":
                     self.perform_heuristic_agent_move()
+                elif self.play_mode in ("NN_VS_RANDOM", "NN_VS_HEURISTIC"):
+                    self.perform_nn_agent_move()
                 else:
                     self.perform_greedy_agent_move()
             else:
-                if self.play_mode == "HEURISTIC_VS_HEURISTIC":
+                if self.play_mode in ("HEURISTIC_VS_HEURISTIC", "NN_VS_HEURISTIC"):
                     self.perform_heuristic_rival_move()
                 else:
                     self.perform_random_rival_move()
 
-            self.game_boards[FourInASquareGame.board_to_string(self.board_state)] = 0
+            # Only record positions after Red's move — the NN is trained and evaluated exclusively on boards where Red just placed a piece.
+            if player_turn:
+                self.game_boards[FourInASquareGame.board_to_string(self.board_state)] = 0
 
             result = self.check_win()
 
@@ -253,6 +312,58 @@ class FourInASquareGame:
         move = (place_sub_board_idx, random_spot, move_sub_board_idx)
         self.execute_move(move, player_value)
 
+    def get_nn_move(self):
+        """Score every legal move with the NN and return the best one.
+        Returns (sub_board_idx, spot_idx, source_idx) or None if no model is loaded."""
+        if FourInASquareGame._nn_model is None:
+            return None
+
+        best_score = float('-inf')
+        best_move = None
+        empty_sub_board_spot = self.possible_sub_board_spots.index(2)
+
+        with torch.no_grad():
+            for i in range(9):
+                if not self.board_state[i]:
+                    continue
+                if i == empty_sub_board_spot:
+                    continue
+                for spot in list(self.empty_spots[i]):
+                    self.board_state[i][spot] = 1
+
+                    for j in range(9):
+                        if self.possible_sub_board_spots[j] != 1:
+                            continue
+
+                        saved_empty = self.board_state[empty_sub_board_spot]
+                        self.board_state[empty_sub_board_spot] = list(self.board_state[j])
+                        saved_j = self.board_state[j]
+                        self.board_state[j] = []
+
+                        vec = _encode_board_string(FourInASquareGame.board_to_string(self.board_state))
+                        score = FourInASquareGame._nn_model(
+                            torch.tensor([vec], dtype=torch.float32)
+                        ).item()
+
+                        if score > best_score:
+                            best_score = score
+                            best_move = (i, spot, j)
+
+                        self.board_state[j] = saved_j
+                        self.board_state[empty_sub_board_spot] = saved_empty
+
+                    self.board_state[i][spot] = 0
+
+        return best_move
+
+    def perform_nn_agent_move(self):
+        """Make a move using the trained NN. Falls back to random if model not loaded."""
+        move = self.get_nn_move()
+        if move:
+            self.execute_move(move, player_value=1)
+        else:
+            self.make_random_move(1)
+
     def perform_random_rival_move(self):
         self.make_random_move(2)
 
@@ -297,64 +408,79 @@ class FourInASquareGame:
     
     def is_move_safe(self, move, player=1):
         """Check if a move gives the opponent an immediate winning opportunity.
-        
+
+        Uses full mutate/unmake on self.board_state and self.empty_spots to
+        avoid allocating any board copies, which matters in tight training loops.
+
         Returns True if the move is safe (doesn't give opponent a win).
         Returns False if the move allows opponent to win on their next turn.
         """
         our_i, our_spot, our_j = move
         opponent = 3 - player
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
-        
-        # Simulate our move with lightweight copy
-        our_board = FourInASquareGame._copy_board(self.board_state)
-        our_board[our_i][our_spot] = player
-        our_board[empty_sub_board_spot] = list(our_board[our_j])
-        our_board[our_j] = []
-        
-        # Calculate new empty spots after our move
-        new_empty_spots = [list(spots) for spots in self.empty_spots]
-        new_empty_spots[our_i] = [s for s in new_empty_spots[our_i] if s != our_spot]
-        new_empty_spots[empty_sub_board_spot] = list(new_empty_spots[our_j])
-        new_empty_spots[our_j] = []
-        
-        # Calculate new possible sub board spots using NEIGHBORS
-        new_possible_spots = [0] * 9
-        new_possible_spots[our_j] = 2
+
+        # --- Mutate: simulate our move ---
+        self.board_state[our_i][our_spot] = player
+        saved_dest_board = self.board_state[empty_sub_board_spot]   # always []
+        self.board_state[empty_sub_board_spot] = list(self.board_state[our_j])
+        saved_our_j_board = self.board_state[our_j]
+        self.board_state[our_j] = []
+
+        saved_empty_i = self.empty_spots[our_i]
+        self.empty_spots[our_i] = [s for s in saved_empty_i if s != our_spot]
+        saved_empty_dest = self.empty_spots[empty_sub_board_spot]
+        self.empty_spots[empty_sub_board_spot] = list(self.empty_spots[our_j])
+        saved_empty_our_j = self.empty_spots[our_j]
+        self.empty_spots[our_j] = []
+
+        # Post-move opponent possibilities (our_j is now the empty slot)
+        new_possible = [0] * 9
+        new_possible[our_j] = 2
         for n in FourInASquareGame.NEIGHBORS[our_j]:
-            new_possible_spots[n] = 1
-        new_possible_spots[empty_sub_board_spot] = 0
-        
-        opp_empty_spot = new_possible_spots.index(2)
+            new_possible[n] = 1
+        new_possible[empty_sub_board_spot] = 0
+        opp_new_empty = our_j  # == new_possible.index(2)
 
-        # Check if opponent can win from this state using mutate/unmake
+        # --- Check every opponent reply ---
+        result = True
         for opp_i in range(9):
-            if not our_board[opp_i]:
+            if not self.board_state[opp_i]:
                 continue
-            
-            for opp_spot in new_empty_spots[opp_i]:
+            for opp_spot in self.empty_spots[opp_i]:
                 for opp_j in range(9):
-                    if new_possible_spots[opp_j] != 1:
+                    if new_possible[opp_j] != 1:
                         continue
-                    
-                    # Mutate: place opponent piece
-                    saved_cell = our_board[opp_i][opp_spot]
-                    our_board[opp_i][opp_spot] = opponent
+                    # Mutate: opponent move
+                    self.board_state[opp_i][opp_spot] = opponent
+                    saved_opp_dest = self.board_state[opp_new_empty]
+                    self.board_state[opp_new_empty] = list(self.board_state[opp_j])
+                    saved_opp_j = self.board_state[opp_j]
+                    self.board_state[opp_j] = []
 
-                    # Mutate: sub-board swap
-                    saved_opp_empty = our_board[opp_empty_spot]
-                    saved_opp_j = our_board[opp_j]
-                    our_board[opp_empty_spot] = list(our_board[opp_j])
-                    our_board[opp_j] = []
-                    
-                    if FourInASquareGame._check_player_wins(our_board, opponent):
-                        return False  # Move is unsafe
-                    
-                    # Unmake sub-board swap and piece placement
-                    our_board[opp_j] = saved_opp_j
-                    our_board[opp_empty_spot] = saved_opp_empty
-                    our_board[opp_i][opp_spot] = saved_cell
-        
-        return True  # Move is safe
+                    if FourInASquareGame._check_player_wins(self.board_state, opponent):
+                        result = False
+
+                    # Unmake: opponent move
+                    self.board_state[opp_j] = saved_opp_j
+                    self.board_state[opp_new_empty] = saved_opp_dest
+                    self.board_state[opp_i][opp_spot] = 0  # was empty before
+
+                    if not result:
+                        break
+                if not result:
+                    break
+            if not result:
+                break
+
+        # --- Unmake: our move ---
+        self.empty_spots[our_j] = saved_empty_our_j
+        self.empty_spots[empty_sub_board_spot] = saved_empty_dest
+        self.empty_spots[our_i] = saved_empty_i
+        self.board_state[our_j] = saved_our_j_board
+        self.board_state[empty_sub_board_spot] = saved_dest_board
+        self.board_state[our_i][our_spot] = 0
+
+        return result
     
     def execute_move(self, move, player_value=1):
         """Execute a move given as (sub_board_idx, spot_idx, sub_board_to_move)."""
@@ -383,6 +509,7 @@ class FourInASquareGame:
         opponent = 3 - player
         score = 0
         three_threats = 0
+        opp_three_threats = 0
 
         for r in range(5):
             for c in range(5):
@@ -413,30 +540,35 @@ class FourInASquareGame:
                 # Opponent formations
                 elif theirs == 3 and empty == 1:
                     score -= 500  # Must block
+                    opp_three_threats += 1
                 elif theirs == 2 and empty == 2:
                     score -= 25
 
         # Fork bonus: 2+ three-threats is nearly unstoppable
         if three_threats >= 2:
             score += 600
+        # Opponent fork penalty: leaving them with 2+ three-threats is nearly losing
+        if opp_three_threats >= 2:
+            score -= 800
 
         return score, three_threats
 
-    def perform_heuristic_agent_move(self, player=1, exploration_rate=0.0):
+    def perform_heuristic_agent_move(self, player=1, exploration_rate=0.1):
         """Make a move using heuristics:
         1. Instant win → play it
         2. Score all moves via window evaluation
         3. Safety-check top candidates
         4. Play highest-scoring safe move
         """
-        if random.random() < exploration_rate:
-            self.make_random_move(player)
-            return
 
         # Priority 1: Find a winning move (early exit)
         winning_move = self.find_winning_move(player)
         if winning_move:
             self.execute_move(winning_move, player_value=player)
+            return
+        
+        if random.random() < exploration_rate:
+            self.make_random_move(player)
             return
 
         # Collect all legal moves and score them
@@ -502,11 +634,19 @@ class FourInASquareGame:
         """Get the best greedy move without executing it (used by GREEDY mode only)."""
         highest_score = -1
         best_move = None
-        
+
         score_dict = self.boards_and_scores
         empty_sub_board_spot = self.possible_sub_board_spots.index(2)
 
         for i in range(9):
+            if not self.board_state[i]:
+                continue
+            # Skipping i == empty_sub_board_spot: the j-loop moves board_state[j] into
+            # board_state[empty_sub_board_spot] (== board_state[i]), so the piece placed
+            # at board_state[i][spot] before the swap ends up on the wrong sub-board,
+            # producing a board string that was never seen during training.
+            if i == empty_sub_board_spot:
+                continue
             for spot in self.empty_spots[i]:
                 # Mutate piece placement
                 self.board_state[i][spot] = 1

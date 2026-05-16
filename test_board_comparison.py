@@ -1,93 +1,140 @@
 """
-Compare board scores from random (boards_and_scores.json)
-and heuristic (heuristic_boards_and_scores.json).
-Categorizes boards by score ranges (0-1) and prints statistics.
+Analyze board score data from pkl files.
+Shows score distribution, count distribution, and their interaction —
+useful for checking whether temporal decay and data quality need tuning.
 """
 
-import json
+import os
+import pickle
+import statistics
 
 
-def load_scores(filepath: str) -> dict:
-    """Load JSON file and return {board_key: float_score}."""
+def load_pkl(filepath):
     print(f"Loading {filepath}...")
-    with open(filepath, "r") as f:
-        data = json.load(f)
+    with open(filepath, "rb") as f:
+        data = pickle.load(f)
     print(f"  -> {len(data):,} boards loaded.")
-    # Values are [count, score] lists — extract the score (index 1)
-    return {k: float(v[1]) if isinstance(v, list) else float(v) for k, v in data.items()}
+    return data  # {board_str: (count, avg_score)}
 
 
-def categorize(scores: dict) -> dict:
-    cats = {"high": 0, "medium_high": 0, "medium_low": 0, "low": 0}
-    for s in scores.values():
-        if s > 0.8:
-            cats["high"] += 1
-        elif s > 0.6:
-            cats["medium_high"] += 1
-        elif s > 0.4:
-            cats["medium_low"] += 1
-        else:
-            cats["low"] += 1
-    return cats
+_SCORE_BRACKETS = [
+    ("score > 0.8   (Red winning)",    lambda s: s > 0.8),
+    ("0.6 < score ≤ 0.8 (Red edge)",  lambda s: 0.6 < s <= 0.8),
+    ("0.4 < score ≤ 0.6 (neutral)",   lambda s: 0.4 < s <= 0.6),
+    ("0.2 < score ≤ 0.4 (White edge)", lambda s: 0.2 < s <= 0.4),
+    ("score ≤ 0.2   (White winning)",  lambda s: s <= 0.2),
+]
 
-
-LABELS = [
-    ("score > 0.8",        "high"),
-    ("0.6 < score <= 0.8", "medium_high"),
-    ("0.4 < score <= 0.6", "medium_low"),
-    ("score <= 0.4",       "low"),
+_COUNT_BRACKETS = [
+    ("count = 1",      lambda c: c == 1),
+    ("count = 2–3",    lambda c: 2 <= c <= 3),
+    ("count = 4–9",    lambda c: 4 <= c <= 9),
+    ("count = 10–49",  lambda c: 10 <= c <= 49),
+    ("count ≥ 50",     lambda c: c >= 50),
 ]
 
 
-def print_table(name: str, cats: dict, total: int):
-    print(f"\n{'=' * 60}")
+def analyze(data, name):
+    counts = [v[0] for v in data.values()]
+    scores = [v[1] for v in data.values()]
+    total = len(data)
+
+    print(f"\n{'=' * 68}")
     print(f"  {name}  (total: {total:,})")
-    print(f"{'=' * 60}")
-    print(f"  {'Score Range':<25} {'Count':>10}   {'%':>7}")
-    print(f"  {'-' * 50}")
-    for label, key in LABELS:
-        c = cats[key]
-        pct = c / total * 100 if total else 0
-        print(f"  {label:<25} {c:>10,}   {pct:>6.2f}%")
-    print(f"  {'-' * 50}")
+    print(f"{'=' * 68}")
+
+    # --- Score distribution ---
+    print(f"\n  Score Distribution:")
+    print(f"  {'Range':<38} {'Count':>8}   {'%':>6}")
+    print(f"  {'-' * 56}")
+    for label, fn in _SCORE_BRACKETS:
+        c = sum(1 for s in scores if fn(s))
+        print(f"  {label:<38} {c:>8,}   {c / total * 100:>5.1f}%")
+
+    mean_s   = statistics.mean(scores)
+    median_s = statistics.median(scores)
+    stdev_s  = statistics.stdev(scores)
+    print(f"\n  Score stats:  mean={mean_s:.4f}  median={median_s:.4f}  stdev={stdev_s:.4f}")
+
+    # --- Count distribution with avg score per bracket ---
+    print(f"\n  Count Distribution  (how often each board was seen):")
+    print(f"  {'Range':<18} {'Boards':>8}   {'%':>6}   {'Avg Score':>10}   {'Score Stdev':>11}")
+    print(f"  {'-' * 62}")
+    for label, fn in _COUNT_BRACKETS:
+        subset_scores = [s for c, s in zip(counts, scores) if fn(c)]
+        if not subset_scores:
+            continue
+        avg_s = statistics.mean(subset_scores)
+        sd_s  = statistics.stdev(subset_scores) if len(subset_scores) > 1 else 0.0
+        print(f"  {label:<18} {len(subset_scores):>8,}   "
+              f"{len(subset_scores) / total * 100:>5.1f}%   "
+              f"{avg_s:>10.4f}   {sd_s:>11.4f}")
+
+    mean_c   = statistics.mean(counts)
+    median_c = statistics.median(counts)
+    print(f"\n  Count stats:  mean={mean_c:.1f}  median={median_c}  max={max(counts)}")
+
+    # --- Min-count filter impact ---
+    print(f"\n  Min-count filter impact (boards that survive each threshold):")
+    print(f"  {'Threshold':<15} {'Boards kept':>12}   {'% of total':>10}")
+    print(f"  {'-' * 42}")
+    for thresh in (1, 2, 3, 5, 10):
+        kept = sum(1 for c in counts if c >= thresh)
+        print(f"  min_count ≥ {thresh:<4} {kept:>12,}   {kept / total * 100:>9.1f}%")
+
+    # --- Decay note ---
+    print(f"\n  Decay note:")
+    print(f"  Scores near 0.5 ({sum(1 for s in scores if 0.4 < s <= 0.6):,} boards, "
+          f"{sum(1 for s in scores if 0.4 < s <= 0.6) / total * 100:.1f}%) "
+          f"provide weak training signal.")
+    print(f"  Polarized boards (>0.8 or ≤0.2): "
+          f"{sum(1 for s in scores if s > 0.8 or s <= 0.2):,} "
+          f"({sum(1 for s in scores if s > 0.8 or s <= 0.2) / total * 100:.1f}%)")
 
 
-def print_comparison(r_cats: dict, h_cats: dict, r_total: int, h_total: int):
+def compare(data1, name1, data2, name2):
+    scores1 = [v[1] for v in data1.values()]
+    scores2 = [v[1] for v in data2.values()]
+    t1, t2 = len(scores1), len(scores2)
+
+    n1 = name1[:16]
+    n2 = name2[:16]
     print(f"\n{'=' * 80}")
-    print(f"  COMPARISON:  Random  vs  Heuristic")
+    print(f"  COMPARISON:  {name1}  vs  {name2}")
     print(f"{'=' * 80}")
-    print(f"  {'Score Range':<25} {'Random':>18}   {'Heuristic':>18}")
-    print(f"  {'-' * 70}")
-    for label, key in LABELS:
-        rc = r_cats[key]
-        rp = rc / r_total * 100 if r_total else 0
-        hc = h_cats[key]
-        hp = hc / h_total * 100 if h_total else 0
-        print(f"  {label:<25} {rc:>8,} ({rp:>5.2f}%)   {hc:>8,} ({hp:>5.2f}%)")
-    print(f"  {'-' * 70}")
+    print(f"  {'Range':<38} {n1:>16}   {n2:>16}")
+    print(f"  {'-' * 76}")
+    for label, fn in _SCORE_BRACKETS:
+        c1 = sum(1 for s in scores1 if fn(s))
+        c2 = sum(1 for s in scores2 if fn(s))
+        print(f"  {label:<38} {c1:>6,} ({c1/t1*100:>5.1f}%)   {c2:>6,} ({c2/t2*100:>5.1f}%)")
 
 
 def main():
-    random_file    = "board_dicts/boards_and_scores.json"
-    heuristic_file = "board_dicts/heuristic_boards_and_scores.json"
+    candidates = {
+        "Heuristic": "board_dicts/heuristic_boards_and_scores.pkl",
+        "Random":    "board_dicts/boards_and_scores.pkl",
+        "Greedy":    "board_dicts/greedy_boards_and_scores.pkl",
+    }
 
-    random_scores    = load_scores(random_file)
-    heuristic_scores = load_scores(heuristic_file)
+    loaded = {}
+    for name, path in candidates.items():
+        if os.path.exists(path):
+            loaded[name] = load_pkl(path)
+        else:
+            print(f"  {name}: {path} not found, skipping.")
 
-    r_cats = categorize(random_scores)
-    h_cats = categorize(heuristic_scores)
+    for name, data in loaded.items():
+        analyze(data, name)
 
-    print_table("RANDOM PLAYER - Score Distribution",
-                r_cats, len(random_scores))
-    print_table("HEURISTIC PLAYER - Score Distribution",
-                h_cats, len(heuristic_scores))
+    names = list(loaded.keys())
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            compare(loaded[names[i]], names[i], loaded[names[j]], names[j])
 
-    print_comparison(r_cats, h_cats,
-                     len(random_scores), len(heuristic_scores))
-
-    print(f"\n{'=' * 80}")
-    print("  Done!")
-    print(f"{'=' * 80}\n")
+    print(f"\n{'=' * 68}")
+    print("  Done.")
+    print(f"{'=' * 68}\n")
 
 
 if __name__ == "__main__":
